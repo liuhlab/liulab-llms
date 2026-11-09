@@ -28,8 +28,9 @@ _Avoid_: transcript, log entry
 ### Gateway
 
 The lab's one service that sends every model call: it holds the provider keys, keeps the
-record, replays any request it has answered, and enforces each meter's ceiling. `Gateway` is
-also the library's client for it.
+record, replays any request it has answered, and enforces each meter's ceiling. A call
+identical to one in flight waits for it, so a request is paid once. `Gateway` is also the
+library's client for it.
 _Avoid_: proxy
 
 ### Held

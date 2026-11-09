@@ -10,6 +10,7 @@ from typing import Any
 from labllm import peak, wire
 from labllm.client import Gateway
 from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
+from labllm.flights import Flights
 from labllm.model import Price
 from labllm.peak import OffPeak
 from labllm.retry import Retries, unreadable
@@ -145,6 +146,7 @@ class FakeGateway:
         self._reserved: defaultdict[str, float] = defaultdict(float)
         self._record: list[Exchange] = []
         self._refusals: float = 0
+        self._flights = Flights(self.clock)
 
     @property
     def record(self) -> list[Exchange]:
@@ -176,16 +178,30 @@ class FakeGateway:
             return wire.encode_error(e)
 
     def _answer(self, call: wire.Call) -> dict[str, Any]:
-        form, meter = call.form, call.meter
-        key = wire.cache_key(form)
+        key = wire.cache_key(call.form)
+        hit = self._hit(call, key)
+        if hit is not None:
+            return hit
+        with self._lock:
+            price = self._prices.get(call.form["model"])
+        if price is None:
+            raise Rejected(f"no price for model {call.form['model']!r}")
+        with self._flights.claim(key):
+            hit = self._hit(call, key)
+            if hit is not None:
+                return hit
+            return self._attempts(call, key, price)
+
+    def _hit(self, call: wire.Call, key: str) -> dict[str, Any] | None:
         with self._lock:
             hit = self._cache.get(key)
-            if hit is not None:
-                self._log(call, key, cached=True)
-                return {**hit, "cost_usd": 0.0, "cached": True, "attempts": 0}
-            price = self._prices.get(form["model"])
-            if price is None:
-                raise Rejected(f"no price for model {form['model']!r}")
+            if hit is None:
+                return None
+            self._log(call, key, cached=True)
+            return {**hit, "cost_usd": 0.0, "cached": True, "attempts": 0}
+
+    def _attempts(self, call: wire.Call, key: str, price: Price) -> dict[str, Any]:
+        form, meter = call.form, call.meter
         input_tokens = _input_tokens(form)
         reserve = (
             input_tokens * price.input_usd_per_token

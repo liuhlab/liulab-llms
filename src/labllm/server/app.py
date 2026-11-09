@@ -22,6 +22,7 @@ from labllm.errors import (
     Rejected,
     Stopped,
 )
+from labllm.flights import Flights
 from labllm.retry import BUDGET_S, Retries, unreadable
 from labllm.server.limits import Gate, Pause, RateLimit, estimate_input_tokens
 from labllm.server.prices import Prices
@@ -127,6 +128,7 @@ class Server:
         self._gates: dict[str, Gate] = {}
         self._pauses: dict[str, Pause] = {}
         self._arrivals = itertools.count()
+        self._flights = Flights(self._clock)
 
     def answer(self, path: str, body: bytes) -> tuple[int, bytes]:
         """Answer one HTTP post with a status and body, as `labllm.wire` encodes them."""
@@ -152,20 +154,36 @@ class Server:
         form = call.form
         key = wire.cache_key(form)
         started = self._clock.now()
-        entry = self._record.entry(key)
-        if entry is not None:
-            self._record.add(Row(call, key, started, self._clock.now(), cached=True))
-            return {
-                **entry.reply,
-                "usage": entry.usage,
-                "cost_usd": 0.0,
-                "first_cost_usd": entry.cost_usd,
-                "cached": True,
-                "attempts": 0,
-            }
+        hit = self._hit(call, key, started)
+        if hit is not None:
+            return hit
         provider = self._providers.get(form["route"])
         if provider is None:
             raise Rejected(f"this gateway does not serve {form['route']} calls yet")
+        with self._flights.claim(key):
+            hit = self._hit(call, key, started)
+            if hit is not None:
+                return hit
+            return self._attempts(call, key, started, provider)
+
+    def _hit(self, call: wire.Call, key: str, started: float) -> dict[str, Any] | None:
+        entry = self._record.entry(key)
+        if entry is None:
+            return None
+        self._record.add(Row(call, key, started, self._clock.now(), cached=True))
+        return {
+            **entry.reply,
+            "usage": entry.usage,
+            "cost_usd": 0.0,
+            "first_cost_usd": entry.cost_usd,
+            "cached": True,
+            "attempts": 0,
+        }
+
+    def _attempts(
+        self, call: wire.Call, key: str, started: float, provider: Provider
+    ) -> dict[str, Any]:
+        form = call.form
         reserve = self._prices.largest_cost(form)
         gate, pause = self._gate(form)
         tokens = estimate_input_tokens(form)

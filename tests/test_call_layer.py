@@ -144,6 +144,58 @@ def test_calls_in_flight_hold_back_their_largest_possible_cost(harness: Harness)
     assert r.text == "abc"
 
 
+def held_until_released(answers: list[Any]) -> tuple[Any, threading.Event, threading.Event]:
+    """A provider function that waits for `release`, then raises or returns `answers` in turn."""
+    started, release = threading.Event(), threading.Event()
+    calls = iter(answers)
+
+    def provider(form: dict[str, Any]) -> Any:
+        started.set()
+        assert release.wait(timeout=10)
+        answer = next(calls)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return provider, started, release
+
+
+def test_a_call_identical_to_one_in_flight_waits_and_replays_it_for_free(
+    harness: Harness,
+) -> None:
+    provider, started, release = held_until_released(["abc"])
+    harness.provider(provider)
+    with harness.client().meter("twins", ceiling_usd=1.0) as m, ThreadPoolExecutor(2) as pool:
+        first = pool.submit(m.chat, CHAT, user="hello")
+        assert started.wait(timeout=10)
+        second = pool.submit(m.chat, CHAT, user="hello")
+        harness.clock.until_waiting(1)
+        release.set()
+        paid, replayed = first.result(timeout=10), second.result(timeout=10)
+    assert (paid.cached, replayed.cached, replayed.cost_usd, replayed.attempts) == (
+        False,
+        True,
+        0.0,
+        0,
+    )
+    assert [e.cached for e in harness.record()] == [False, True]
+
+
+def test_a_call_identical_to_one_that_failed_in_flight_tries_itself(harness: Harness) -> None:
+    provider, started, release = held_until_released([ProviderExhausted("no balance"), "abc"])
+    harness.provider(provider)
+    with harness.client().meter("twins", ceiling_usd=1.0) as m, ThreadPoolExecutor(2) as pool:
+        first = pool.submit(m.chat, CHAT, user="hello")
+        assert started.wait(timeout=10)
+        second = pool.submit(m.chat, CHAT, user="hello")
+        harness.clock.until_waiting(1)
+        release.set()
+        with pytest.raises(ProviderExhausted):
+            first.result(timeout=10)
+        assert second.result(timeout=10).cached is False
+    assert [e.error for e in harness.record()] == ["provider_exhausted", None]
+
+
 def test_a_cache_hit_never_counts_against_a_ceiling(harness: Harness) -> None:
     harness.provider(lambda form: "abc")
     client = harness.client()
