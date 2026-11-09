@@ -26,6 +26,7 @@ from labllm import (
     CeilingReached,
     ChatReply,
     Gateway,
+    GatewayUnreachable,
     JevReply,
     Model,
     ProviderExhausted,
@@ -158,6 +159,26 @@ def test_a_restart_keeps_each_meters_spend(conninfo: str) -> None:
         pytest.raises(CeilingReached),
     ):
         m.chat(CHAT, user="two")  # 0.03 spent before the restart, plus 0.10 held
+
+
+class BrokenRecord(Record):
+    """A record whose database fails on every read of the cache."""
+
+    def entry(self, key: str) -> Any:
+        raise psycopg.OperationalError("the database went away")
+
+
+def test_a_failure_inside_the_gateway_is_gateway_unreachable(conninfo: str) -> None:
+    provider = stand_in(lambda form: "abc", PRICES)
+    with (
+        BrokenRecord(conninfo) as record,
+        running(Server(record, Prices(PRICES), {"chat": provider})) as url,
+    ):
+        m = Gateway(repo="tests", transport=HttpTransport(url), clock=FakeClock()).meter(
+            "broken", ceiling_usd=1.0
+        )
+        with pytest.raises(GatewayUnreachable, match="the database went away"):
+            m.chat(CHAT, user="hello")
 
 
 def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conninfo: str) -> None:

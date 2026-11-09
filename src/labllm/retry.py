@@ -1,7 +1,7 @@
 """When a gateway tries an unavailable provider again: one rule for the fake and the real one."""
 
 from labllm.clock import Clock
-from labllm.errors import ProviderUnavailable
+from labllm.errors import STOPS, ProviderUnavailable, Rejected, Stopped
 
 #: How long a call keeps trying after its first failure, unless the gateway's settings say.
 BUDGET_S = 300.0
@@ -50,3 +50,14 @@ class Retries:
         if wait is None:
             wait = min(_FIRST_WAIT_S * 2 ** max(self.attempts - 1, 0), _LONGEST_WAIT_S)
         return now + wait
+
+
+def unreadable(error: Exception, provider: str) -> Stopped | Rejected:
+    """Return `error` if a provider may raise it; otherwise the provider's response was unreadable.
+
+    A provider raises one of the four stops or `Rejected`. Any other exception means the gateway
+    could not read the response, which is worth another attempt.
+    """
+    if isinstance(error, (*STOPS, Rejected)):
+        return error
+    return ProviderUnavailable(f"the gateway could not read {provider}'s response: {error!r}")

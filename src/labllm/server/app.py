@@ -14,8 +14,15 @@ from typing import Any, cast
 
 from labllm import peak, wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
-from labllm.retry import BUDGET_S, Retries
+from labllm.errors import (
+    CeilingReached,
+    GatewayUnreachable,
+    PeakHours,
+    ProviderUnavailable,
+    Rejected,
+    Stopped,
+)
+from labllm.retry import BUDGET_S, Retries, unreadable
 from labllm.server.limits import Gate, Pause, RateLimit, estimate_input_tokens
 from labllm.server.prices import Prices
 from labllm.server.record import Record, Row
@@ -133,7 +140,7 @@ class Server:
             return wire.encode_error(e)
         except Exception as e:
             log.exception("the gateway failed on a call to %s", path)
-            return wire.encode_error(Stopped(f"the gateway failed: {e!r}"))
+            return wire.encode_error(GatewayUnreachable(f"the gateway failed: {e!r}"))
 
     def http(self, host: str, port: int) -> ThreadingHTTPServer:
         """Return an HTTP server for this gateway at `host` and `port`, not yet serving."""
@@ -182,19 +189,18 @@ class Server:
             try:
                 attempt = provider(form)
                 input_tokens = attempt.input_tokens
-            except (Stopped, Rejected) as e:
+            except Exception as e:
+                failure = unreadable(e, form["provider"])
                 self._settle(meter, reserve, 0.0)
-                self._record.add(self._ended(done, error=e.reason, message=str(e)))
-                if not isinstance(e, ProviderUnavailable):
+                self._record.add(self._ended(done, error=failure.reason, message=str(failure)))
+                if not isinstance(failure, ProviderUnavailable):
                     raise
                 # Overload or no answer at all: every caller of this provider waits it out.
-                pause.extend(until := retries.next_try(e))
-                log.info("pausing %s until %.1f s from now: %s", form["provider"], until - sent, e)
-                again = retries.again(e)
-            except Exception as e:
-                self._settle(meter, reserve, 0.0)
-                self._record.add(self._ended(done, error=Stopped.reason, message=repr(e)))
-                raise
+                pause.extend(until := retries.next_try(failure))
+                log.info(
+                    "pausing %s until %.1f s from now: %s", form["provider"], until - sent, failure
+                )
+                again = retries.again(failure)
             else:
                 self._settle(meter, reserve, attempt.cost_usd)
                 reply = {"text" if form["route"] == "chat" else "answers": attempt.output}

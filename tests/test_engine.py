@@ -19,6 +19,7 @@ import labllm
 from harness import DEEPSEEK_OFF_PEAK, HOUR, MONDAY
 from labllm import (
     CeilingReached,
+    GatewayUnreachable,
     Held,
     Inputs,
     Model,
@@ -502,7 +503,7 @@ def test_settle_and_refuse_inside_each_end_the_unit(task: Task) -> None:
 
 def _gateway_goes(fake: FakeGateway) -> None:
     fake.refuse_connections()
-    raise ConnectionResetError("the gateway went away mid-call")
+    raise GatewayUnreachable("the gateway went away mid-call")
 
 
 def _raises(error: type[Stopped]) -> Any:

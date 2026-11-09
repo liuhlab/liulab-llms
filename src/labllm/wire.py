@@ -13,35 +13,16 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, TypeGuard
 
-from labllm.errors import (
-    CeilingReached,
-    GatewayUnreachable,
-    PeakHours,
-    ProviderExhausted,
-    ProviderUnavailable,
-    Rejected,
-    Stopped,
-)
+from labllm.errors import STOPS, GatewayUnreachable, PeakHours, Rejected, Stopped
 from labllm.model import Model
 
 #: The path each route is posted to.
 PATHS = {"chat": "/chat", "jev": "/jev"}
 
-_ERRORS: dict[str, type[Stopped | Rejected]] = {
-    cls.reason: cls
-    for cls in (
-        Stopped,
-        CeilingReached,
-        ProviderExhausted,
-        ProviderUnavailable,
-        GatewayUnreachable,
-        Rejected,
-    )
-}
+_ERRORS: dict[str, type[Stopped | Rejected]] = {cls.reason: cls for cls in (*STOPS, Rejected)}
 
 #: The HTTP status a gateway answers each error with. A client reads the reason, not this.
 STATUS = {
-    "stopped": 500,
     "ceiling_reached": 402,
     "provider_exhausted": 402,
     "provider_unavailable": 503,

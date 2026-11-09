@@ -213,6 +213,22 @@ def test_an_unavailable_provider_is_tried_again_and_each_attempt_is_counted(
     ]
 
 
+def test_a_provider_response_the_gateway_cannot_read_is_tried_again(harness: Harness) -> None:
+    calls: list[str] = []
+
+    def garbled(form: dict[str, Any]) -> str:
+        calls.append(form["messages"][-1]["content"])
+        if len(calls) == 1:
+            raise KeyError("choices")
+        return "abc"
+
+    harness.provider(garbled)
+    with harness.client().meter("garbled", ceiling_usd=0.1) as m:
+        r = m.chat(CHAT, user="hello")
+    assert (r.text, r.attempts) == ("abc", 2)
+    assert [e.error for e in harness.record()] == ["provider_unavailable", None]
+
+
 def test_an_empty_reply_is_tried_again_and_never_cached(harness: Harness) -> None:
     replies = iter(["", "abc"])
     harness.provider(lambda form: next(replies))

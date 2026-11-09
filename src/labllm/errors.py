@@ -1,14 +1,16 @@
 """The errors a call raises: four that stop the caller's loop, and `Rejected`."""
 
+from typing import ClassVar
+
 
 class Stopped(Exception):  # noqa: N818 - the name callers catch
-    """A call failed in a way that must stop the caller's loop.
+    """A call failed in a way that must stop the caller's loop: the base of the four stops.
 
     `reason` names the stop, the same string on every instance of a class. It is also the
     error's code on the wire.
     """
 
-    reason = "stopped"
+    reason: ClassVar[str]
 
 
 class CeilingReached(Stopped):
@@ -67,3 +69,7 @@ class PeakHours(Exception):  # noqa: N818 - named for what the gateway says
     def __init__(self, message: str, *, until: float) -> None:
         super().__init__(message)
         self.until = until
+
+
+#: The four stops: every `Stopped` error a call raises is one of them.
+STOPS = (CeilingReached, ProviderExhausted, ProviderUnavailable, GatewayUnreachable)

@@ -12,12 +12,13 @@ from labllm.client import Gateway
 from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
 from labllm.model import Price
 from labllm.peak import OffPeak
-from labllm.retry import Retries
+from labllm.retry import Retries, unreadable
 
 __all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider"]
 
 #: Plays the provider: takes a request form and returns the reply text (chat) or Jev's
-#: answers. It may raise any `Stopped` subclass or `Rejected`, as the gateway would.
+#: answers. It may raise one of the four stops or `Rejected`, as a provider would; any other
+#: exception plays a response the gateway cannot read.
 Provider = Callable[[dict[str, Any]], Any]
 
 
@@ -206,17 +207,15 @@ class FakeGateway:
             retries.attempts += 1
             try:
                 out = self._provider(form)
-            except ProviderUnavailable as e:
+            except Exception as e:
+                failure = unreadable(e, form["provider"])
                 with self._lock:
                     self._reserved[meter] -= reserve
-                    self._log(call, key, form=form, error=e.reason)
-                self.clock.sleep_until(retries.again(e))
+                    self._log(call, key, form=form, error=failure.reason)
+                if not isinstance(failure, ProviderUnavailable):
+                    raise
+                self.clock.sleep_until(retries.again(failure))
                 continue
-            except (Stopped, Rejected) as e:
-                with self._lock:
-                    self._reserved[meter] -= reserve
-                    self._log(call, key, form=form, error=e.reason)
-                raise
             except BaseException:
                 with self._lock:
                     self._reserved[meter] -= reserve
