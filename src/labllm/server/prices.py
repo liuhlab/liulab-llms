@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 from collections.abc import Mapping
 from types import ModuleType
 from typing import Any
@@ -15,12 +14,10 @@ log = logging.getLogger(__name__)
 
 
 def litellm() -> ModuleType:
-    """Import LiteLLM so that it prices from the table in the pinned release.
+    """Import LiteLLM, which prices from the table in the pinned release.
 
-    Without the setting, LiteLLM downloads the newest table at import, so one pin could price
-    one call two ways.
+    `labllm.server` sets ``LITELLM_LOCAL_MODEL_COST_MAP`` before this module loads.
     """
-    os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     import litellm
 
     return litellm

@@ -25,6 +25,7 @@ from labllm.reviews import _NO_ANSWER, Review, Reviews, _holding
 from labllm.state import (
     ENDINGS,
     NOT_ENDINGS,
+    PASS_ENDINGS,
     CheckResult,
     Outcome,
     PassStart,
@@ -452,7 +453,7 @@ class Task:
                 labllm_version=version("liulab-llms"),
             )
         )
-        counts: dict[str, int] = dict.fromkeys((*ENDINGS[:3], *NOT_ENDINGS), 0)
+        counts: dict[str, int] = dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0)
         lock = threading.Lock()
         stop = _Stop(meter)
 

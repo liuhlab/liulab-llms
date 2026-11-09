@@ -5,7 +5,8 @@ Start it with ``python -m labllm.server``. It needs the ``gateway`` extra.
 
 import os
 
-# Before anything here can import LiteLLM: price from the pinned table, download nothing.
+# The one place it is set, before anything here can import LiteLLM. Without it, LiteLLM
+# downloads the newest price table at import, so one pin could price one call two ways.
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 from labllm.server.app import Attempt, Provider, Server

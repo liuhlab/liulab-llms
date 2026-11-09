@@ -20,8 +20,11 @@ from labllm.model import Model
 if TYPE_CHECKING:
     from labllm.reviews import Review
 
-#: What a unit's outcome in one pass can be. The first four are endings; the last two are not.
-ENDINGS = ("settled", "unsettled", "refused", "dropped")
+#: The endings a pass gives. A person's review gives the fourth, dropped.
+PASS_ENDINGS = ("settled", "unsettled", "refused")
+#: The endings: what a unit's current answer can be.
+ENDINGS = (*PASS_ENDINGS, "dropped")
+#: What else a unit's outcome in one pass can be.
 NOT_ENDINGS = ("unfinished", "held")
 
 #: Marks a SQLite file as a task's state file.
@@ -536,4 +539,4 @@ _OUTCOME_COLUMNS = (
     "o.spent_usd, o.first_cost_usd, o.requests, o.cache_hits, o.usage, o.seconds, "
     "p.meter, p.kind_version, p.models, p.repo_version, p.labllm_version"
 )
-_ENDED = "('settled', 'unsettled', 'refused', 'dropped')"
+_ENDED = "(" + ", ".join(f"'{ending}'" for ending in ENDINGS) + ")"
