@@ -1,6 +1,6 @@
 ---
 name: gateway-setup
-description: Set up, upgrade, restore or tear down the lab gateway's VM, or add a lab member's tunnel key. Use for any change to the deployed gateway.
+description: Set up, upgrade, restore or tear down the lab gateway's VM, move its LiteLLM pin, or add a provider key or a lab member's tunnel key. Use for any change to the deployed gateway.
 ---
 
 # The gateway's VM
@@ -54,6 +54,14 @@ After first setup and after every rebuild, since a new VM has a new boot disk:
 ```bash
 env | grep -E '^(DEEPSEEK|TYPESAFE|OPENAI|ANTHROPIC)_API_KEY=' |
   ssh llm-gateway 'sudo sh -c "umask 077 && cat > /etc/labllm/keys.env" && sudo systemctl restart labllm-gateway'
+```
+
+To add or replace one key and keep the others, from the mode-600 file the admin typed it into:
+
+```bash
+grep '^OPENAI_API_KEY=' <key file> | ssh llm-gateway 'sudo sh -c "umask 077 &&
+  { grep -v ^OPENAI_API_KEY= /etc/labllm/keys.env; cat; } > /etc/labllm/keys.env.new &&
+  mv /etc/labllm/keys.env.new /etc/labllm/keys.env" && sudo systemctl restart labllm-gateway'
 ```
 
 ## Add a lab member's key
@@ -111,6 +119,20 @@ ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
 
 Then run "Check it works": a call answered before the dump comes back as a hit. Drop
 `labllm_before_restore` once the admin agrees.
+
+## Move the LiteLLM pin
+
+Only when the gateway needs something a newer release has, or an advisory names the pin. A
+newer release alone is no reason.
+
+1. Take the newest final release uploaded at least a week ago, not yanked and never 1.107.0:
+   `https://pypi.org/pypi/litellm/json` lists each one's upload time and yank flag.
+2. No advisory names it: OSV answers `{}` to
+   `curl -s -X POST https://api.osv.dev/v1/query -d '{"package":{"name":"litellm","ecosystem":"PyPI"},"version":"<version>"}'`.
+3. At its tag, re-check the research resolution's points (ADR 0006) and the price-table
+   entries of the providers the gateway uses.
+4. Move the pin in `pyproject.toml`, `pixi lock`, `pixi run check`, cut a release, then
+   "Upgrade".
 
 ## Upgrade
 
