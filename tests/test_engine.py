@@ -266,15 +266,20 @@ def test_every_answer_is_stamped(task: Task) -> None:
             k, ["a"], models={"writer": WRITER, "judge": judge}, ceiling_usd=1.0, label="x"
         )
         a = t.current(k, "a")
-    head = subprocess.run(
-        ["git", "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True, check=True
+    # On a tagged commit `git describe` gives the bare tag, so compare with it, not a hash.
+    described = subprocess.run(
+        ["git", "describe", "--tags", "--always", "--dirty", "--abbrev=12"],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     assert a is not None
     s = a.stamp
     assert (s.kind, s.kind_version, s.inputs_tag) == ("split", "7", "text=red green")
     assert s.models == {"writer": WRITER, "judge": judge}
     assert (s.pass_id, s.meter) == (result.pass_id, result.meter)
-    assert head in s.repo_version
+    assert s.repo_version == described
     assert s.labllm_version == labllm.__version__
 
 
