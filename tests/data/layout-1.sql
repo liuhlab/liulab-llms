@@ -1,6 +1,7 @@
--- A state file of layout 1, as SQLite's dump. Made by liulab-llms at commit 0dd4974: one pass
--- of the tests' split kind over unit "a" with FakeGateway, then sqlite3's iterdump, with the
--- application_id and user_version pragmas written above it. Regenerate only from that commit.
+-- A state file of layout 1, as SQLite's dump: one pass of the tests' split kind over unit
+-- "a" with FakeGateway, by a liulab-llms that wrote layout 1, then sqlite3's iterdump, with
+-- the application_id and user_version pragmas written above it. Layout 1 never changes, so
+-- neither does this file.
 PRAGMA application_id=1819045236;
 PRAGMA user_version=1;
 BEGIN TRANSACTION;

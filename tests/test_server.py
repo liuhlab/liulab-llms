@@ -234,7 +234,8 @@ def test_the_reservation_counts_the_schema_and_system_prompt_as_input(conninfo: 
 def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conninfo: str) -> None:
     calls: list[str] = []
     provider = stand_in(lambda form: calls.append("sent") or "abc", {"gpt-5.5": Price(0, 0)})
-    model = Model("openai", "gpt-5.5", max_output_tokens=1000)  # at most 0.03 USD of output
+    # Its output allowance, at the pinned table's price, falls between the two ceilings.
+    model = Model("openai", "gpt-5.5", max_output_tokens=1000)
     with gateway(conninfo, {"chat": provider}, prices={}) as gw:
         with gw.meter("too small", ceiling_usd=0.02) as m, pytest.raises(CeilingReached):
             m.chat(model, user="hello")
@@ -244,7 +245,7 @@ def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conni
 
 
 def test_deepseeks_peak_hours_come_from_the_pinned_table(conninfo: str) -> None:
-    clock = FakeClock(MONDAY + 2 * HOUR)  # in DeepSeek's 01:00-04:00 UTC peak, by the spec
+    clock = FakeClock(MONDAY + 2 * HOUR)  # in DeepSeek's peak hours
     sent_at: list[float] = []
     provider = stand_in(lambda form: sent_at.append(clock.now()) or "abc", {DEEPSEEK: Price(0, 0)})
     server = Server(record := Record(conninfo), Prices(), {"chat": provider}, clock=clock)
@@ -320,7 +321,7 @@ def test_openai_gets_one_attempt_and_native_schema_output(conninfo: str) -> None
 def test_a_reply_carries_the_providers_usage_and_litellms_cost(conninfo: str) -> None:
     model = Model("openai", "gpt-5.5")
     r = send(conninfo, LiteLLMChat(Prices(), completion=Completion()), model)
-    # LiteLLM's mock reports 10 input and 20 output tokens; gpt-5.5 lists $5 and $30 per million.
+    # LiteLLM's mock reports 10 input and 20 output tokens, at gpt-5.5's prices in the table.
     assert r.usage == {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
     assert r.cost_usd == pytest.approx(10 * 5e-6 + 20 * 30e-6)
 

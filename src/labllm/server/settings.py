@@ -48,16 +48,16 @@ def load(path: Path | None) -> Settings:
         peak_margin_minutes = 5
         retry_budget_minutes = 5
 
-        [prices."my-model"]
-        input_usd_per_million = 0.5
+        [prices."some-model"]
+        input_usd_per_million = 1.0
         output_usd_per_million = 2.0
 
-        [limits.typesafe]
-        requests_per_second = 80
-        input_tokens_per_second = 100_000
+        [limits.some-provider]
+        requests_per_second = 10
+        input_tokens_per_second = 20_000
 
-        [limits.openai."gpt-5.5"]
-        requests_per_second = 166.7  # 10,000 a minute
+        [limits.other-provider."some-model"]
+        calls_at_once = 4
 
     Raises
     ------
