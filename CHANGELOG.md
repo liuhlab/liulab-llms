@@ -7,8 +7,18 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.0] - 2026-11-09
+
+The first release.
+
 ### Added
 
+- The lab gateway, under the `gateway` extra: one service that holds the provider keys, sends
+  every model call, keeps every attempt in PostgreSQL and replays any request it has answered
+  before at no cost.
+- The engine: declare a unit kind as one plain function, run a pass over many units from your
+  own command, stop cleanly at a ceiling, and resume by running the same command again.
+- Off-peak-only passes, which send DeepSeek calls only in its half-price hours.
 - The call layer: open a meter with a dollar ceiling and make blocking chat and Jev calls through
   the lab gateway, with `labllm.testing.FakeGateway` standing in for it in tests.
 - The review queue and reviews: list the units a person must look at, and save a person's
