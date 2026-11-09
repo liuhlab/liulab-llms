@@ -63,8 +63,10 @@ class Transport(Protocol):
 
         Raises
         ------
-        ConnectionError
-            The gateway refused the connection, or dropped it before answering.
+        ConnectionRefusedError
+            The gateway refused the connection, so nothing was sent.
+        OSError, http.client.HTTPException
+            The connection failed in any other way, perhaps after the request was sent.
         """
         ...
 
@@ -95,7 +97,8 @@ class Gateway:
 
     The gateway's address comes from `$LABLLM_GATEWAY`, a local address the caller's SSH
     tunnel serves. A refused connection is retried for `connect_retry_s` seconds, so a gateway
-    restart does not stop the caller, and then raises `GatewayUnreachable`.
+    restart does not stop the caller, and then raises `GatewayUnreachable`. A connection that
+    fails once the request may have been sent raises it at once, so no call is sent twice.
 
     Parameters
     ----------
@@ -177,13 +180,16 @@ class Gateway:
             sent = self._clock.now()
             try:
                 status, out = self._transport.send(path, body)
-            except ConnectionError as e:
+            except ConnectionRefusedError as e:
                 left = deadline - self._clock.now()
                 if left <= 0:
                     raise GatewayUnreachable(f"the gateway does not answer: {e}") from e
                 self._clock.sleep(min(delay, left))
                 delay = min(delay * 2, 8.0)
                 continue
+            except (OSError, http.client.HTTPException) as e:
+                # The request may have been sent: sending it again could pay for it twice.
+                raise GatewayUnreachable(f"the connection to the gateway failed: {e!r}") from e
             try:
                 return wire.decode_response(status, out)
             except PeakHours as e:
