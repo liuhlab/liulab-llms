@@ -6,8 +6,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from labllm.ceiling import input_bytes
 from labllm.clock import Clock
-from labllm.server.prices import input_bytes
 
 
 @dataclass(frozen=True)

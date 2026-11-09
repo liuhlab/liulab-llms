@@ -119,6 +119,32 @@ class Call:
         return call
 
 
+def output_field(route: str) -> str:
+    """Return the reply's field for a route's output: chat's ``text``, or Jev's ``answers``."""
+    return "text" if route == "chat" else "answers"
+
+
+def reply(
+    route: str,
+    output: Any,
+    usage: dict[str, Any],
+    *,
+    cost_usd: float,
+    first_cost_usd: float,
+    cached: bool,
+    attempts: int,
+) -> dict[str, Any]:
+    """Return a reply as a gateway sends it."""
+    return {
+        output_field(route): output,
+        "usage": usage,
+        "cost_usd": cost_usd,
+        "first_cost_usd": first_cost_usd,
+        "cached": cached,
+        "attempts": attempts,
+    }
+
+
 def encode_reply(reply: dict[str, Any]) -> tuple[int, bytes]:
     """Encode a reply as a status and body."""
     return 200, json.dumps(reply, ensure_ascii=False).encode()

@@ -1,6 +1,5 @@
 """What each call may cost before it is sent, and what it cost after."""
 
-import json
 import logging
 from collections.abc import Mapping
 from types import ModuleType
@@ -61,17 +60,6 @@ class Prices:
                 "settings give it none"
             ) from e
 
-    def largest_cost(self, form: dict[str, Any]) -> float:
-        """Return the most the call can cost: estimated input plus its full output allowance.
-
-        Input is estimated as `input_bytes`, which no byte-level tokenizer exceeds.
-        """
-        price = self.price(form)
-        return (
-            input_bytes(form) * price.input_usd_per_token
-            + form["settings"]["max_output_tokens"] * price.output_usd_per_token
-        )
-
     def cost(self, form: dict[str, Any], response: Any) -> float:
         """Return what a LiteLLM response cost.
 
@@ -95,16 +83,3 @@ class Prices:
         """Return what the form's model charges for these token counts, at its dearest hour."""
         price = self.price(form)
         return input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
-
-
-def input_bytes(form: dict[str, Any]) -> int:
-    """Return the UTF-8 bytes of everything a form sends as input, as JSON.
-
-    For chat, the messages with their roles, and the schema; for Jev, its description and
-    questions.
-    """
-    if form["route"] == "chat":
-        sent = [form["messages"], form.get("schema")]
-    else:
-        sent = [form["description"], form["questions"]]
-    return len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode())

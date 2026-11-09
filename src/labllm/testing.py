@@ -2,14 +2,14 @@
 
 import json
 import threading
-from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from labllm import peak, wire
+from labllm.ceiling import Ceilings, largest_cost
 from labllm.client import Gateway
-from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
+from labllm.errors import PeakHours, ProviderUnavailable, Rejected, Stopped
 from labllm.flights import Flights
 from labllm.model import Price
 from labllm.peak import OffPeak
@@ -109,15 +109,15 @@ class FakeClock:
 class FakeGateway:
     """Stands in for the gateway, keeping its rules, with `provider` playing the provider.
 
-    One cache by request form; a hit costs nothing and never counts against a ceiling. Each
-    meter's ceiling, with every call in flight holding back its largest possible cost: input
-    tokens times the input price, plus the full output allowance times the output price. A
-    model missing from `prices` is `Rejected`. Every attempt and hit goes in `record`.
-    An off-peak-only call that is not a hit gets the peak reply in its price's peak hours,
-    and from `peak_margin_s` before they start.
+    One cache by request form; a hit costs nothing and never counts against a ceiling, and a
+    call identical to one in flight waits for it. Each meter's ceiling, with every call in
+    flight holding back its largest possible cost, by the real gateway's rule in
+    `labllm.ceiling`. A model missing from `prices` is `Rejected`. Every attempt and hit goes
+    in `record`. An off-peak-only call that is not a hit gets the peak reply in its price's
+    peak hours, and from `peak_margin_s` before they start.
 
-    Tokens are counted as characters: input is the messages' text, or Jev's description and
-    its questions as JSON; output is the reply text, or Jev's answers as JSON.
+    The provider's tokens are counted as characters: input is the messages' text, or Jev's
+    description and its questions as JSON; output is the reply text, or Jev's answers as JSON.
 
     Examples
     --------
@@ -141,9 +141,8 @@ class FakeGateway:
         self._provider = provider
         self._prices = dict(prices)
         self._lock = threading.Lock()
-        self._cache: dict[str, dict[str, Any]] = {}
-        self._spent: defaultdict[str, float] = defaultdict(float)
-        self._reserved: defaultdict[str, float] = defaultdict(float)
+        self._cache: dict[str, tuple[Any, dict[str, Any], float]] = {}
+        self._ceilings = Ceilings()
         self._record: list[Exchange] = []
         self._refusals: float = 0
         self._flights = Flights(self.clock)
@@ -198,72 +197,72 @@ class FakeGateway:
             if hit is None:
                 return None
             self._log(call, key, cached=True)
-            return {**hit, "cost_usd": 0.0, "cached": True, "attempts": 0}
+        out, usage, first_cost = hit
+        return wire.reply(
+            call.form["route"],
+            out,
+            usage,
+            cost_usd=0.0,
+            first_cost_usd=first_cost,
+            cached=True,
+            attempts=0,
+        )
 
     def _attempts(self, call: wire.Call, key: str, price: Price) -> dict[str, Any]:
         form, meter = call.form, call.meter
         input_tokens = _input_tokens(form)
-        reserve = (
-            input_tokens * price.input_usd_per_token
-            + form["settings"]["max_output_tokens"] * price.output_usd_per_token
-        )
+        reserve = largest_cost(price, form)
         retries = Retries(self.clock)
         paid = 0.0
         try:
             while True:
-                with self._lock:
-                    if call.off_peak_only:
-                        peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
-                    held = self._spent[meter] + self._reserved[meter]
-                    if held + reserve > call.ceiling_usd:
-                        raise CeilingReached(
-                            f"meter {call.label!r} has {held:.6f} USD spent or held, and this call "
-                            f"may cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
-                        )
-                    self._reserved[meter] += reserve
+                if call.off_peak_only:
+                    peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
+                self._ceilings.hold(call, reserve)
                 retries.attempts += 1
                 try:
                     out = self._provider(form)
                 except Exception as e:
                     failure = unreadable(e, form["provider"])
+                    self._ceilings.settle(meter, reserve, 0.0)
                     with self._lock:
-                        self._reserved[meter] -= reserve
                         self._log(call, key, form=form, error=failure.reason)
                     if not isinstance(failure, ProviderUnavailable):
                         raise
                     self.clock.sleep_until(retries.again(failure))
                     continue
                 except BaseException:
-                    with self._lock:
-                        self._reserved[meter] -= reserve
+                    self._ceilings.settle(meter, reserve, 0.0)
                     raise
-                field = "text" if form["route"] == "chat" else "answers"
-                output_tokens = len(out) if field == "text" else len(json.dumps(out))
+                chat = form["route"] == "chat"
+                output_tokens = len(out) if chat else len(json.dumps(out))
                 usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
                 cost = (
                     input_tokens * price.input_usd_per_token
                     + output_tokens * price.output_usd_per_token
                 )
-                reply = {field: out, "usage": usage, "first_cost_usd": cost}
                 empty = None if out else ProviderUnavailable("the provider sent an empty reply")
+                self._ceilings.settle(meter, reserve, cost)
                 with self._lock:
-                    self._reserved[meter] -= reserve
-                    self._spent[meter] += cost
                     if empty is not None:
                         self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
                     else:
-                        self._cache.setdefault(key, reply)
+                        self._cache.setdefault(key, (out, usage, cost))
+                        reply = {wire.output_field(form["route"]): out}
                         self._log(call, key, form=form, reply=reply, cost_usd=cost)
                 if empty is not None:
                     paid += cost
                     self.clock.sleep_until(retries.again(empty))
                     continue
-                return {
-                    **reply,
-                    "cost_usd": paid + cost,
-                    "cached": False,
-                    "attempts": retries.attempts,
-                }
+                return wire.reply(
+                    form["route"],
+                    out,
+                    usage,
+                    cost_usd=paid + cost,
+                    first_cost_usd=cost,
+                    cached=False,
+                    attempts=retries.attempts,
+                )
         except (Stopped, Rejected, PeakHours) as e:
             e.cost_usd, e.attempts = paid, retries.attempts
             raise

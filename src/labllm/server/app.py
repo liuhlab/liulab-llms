@@ -13,9 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
 from labllm import peak, wire
+from labllm.ceiling import Ceilings, largest_cost
 from labllm.clock import Clock, SystemClock
 from labllm.errors import (
-    CeilingReached,
     GatewayUnreachable,
     PeakHours,
     ProviderUnavailable,
@@ -77,12 +77,6 @@ def retry_after_s(headers: Mapping[str, str] | None) -> float | None:
 Provider = Callable[[dict[str, Any]], Attempt]
 
 
-@dataclass
-class _Meter:
-    spent: float
-    held: float = 0.0
-
-
 class Server:
     """The lab gateway, minus its HTTP: one per process, safe from many threads.
 
@@ -124,7 +118,7 @@ class Server:
         self._limits = dict(limits or {})
         self._retry_budget_s = retry_budget_s
         self._lock = threading.Lock()
-        self._meters: dict[str, _Meter] = {}
+        self._ceilings = Ceilings(record.spent)
         self._gates: dict[str, Gate] = {}
         self._pauses: dict[str, Pause] = {}
         self._arrivals = itertools.count()
@@ -171,20 +165,22 @@ class Server:
         if entry is None:
             return None
         self._record.add(Row(call, key, started, self._clock.now(), cached=True))
-        return {
-            **entry.reply,
-            "usage": entry.usage,
-            "cost_usd": 0.0,
-            "first_cost_usd": entry.cost_usd,
-            "cached": True,
-            "attempts": 0,
-        }
+        route = call.form["route"]
+        return wire.reply(
+            route,
+            entry.reply[wire.output_field(route)],
+            entry.usage,
+            cost_usd=0.0,
+            first_cost_usd=entry.cost_usd,
+            cached=True,
+            attempts=0,
+        )
 
     def _attempts(
         self, call: wire.Call, key: str, started: float, provider: Provider
     ) -> dict[str, Any]:
         form = call.form
-        reserve = self._prices.largest_cost(form)
+        reserve = largest_cost(self._prices.price(form), form)
         gate, pause = self._gate(form)
         tokens = estimate_input_tokens(form)
         arrival = next(self._arrivals)
@@ -197,7 +193,7 @@ class Server:
                     if call.off_peak_only:
                         off_peak = self._prices.price(form).off_peak
                         peak.check(off_peak, self._clock.now(), self._peak_margin_s)
-                    meter = self._hold(call, reserve)
+                    self._ceilings.hold(call, reserve)
                 except BaseException:
                     turn.cancel()
                     raise
@@ -216,7 +212,7 @@ class Server:
                 try:
                     row_id = self._record.add(done)
                 except BaseException:
-                    self._settle(meter, reserve, 0.0)
+                    self._ceilings.settle(call.meter, reserve, 0.0)
                     turn.cancel()
                     raise
                 try:
@@ -224,7 +220,7 @@ class Server:
                     input_tokens = attempt.input_tokens
                 except Exception as e:
                     failure = unreadable(e, form["provider"])
-                    self._settle(meter, reserve, 0.0)
+                    self._ceilings.settle(call.meter, reserve, 0.0)
                     self._record.finish(
                         row_id, self._ended(done, error=failure.reason, message=str(failure))
                     )
@@ -240,8 +236,8 @@ class Server:
                     )
                     again = retries.again(failure)
                 else:
-                    self._settle(meter, reserve, attempt.cost_usd)
-                    reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
+                    self._ceilings.settle(call.meter, reserve, attempt.cost_usd)
+                    reply = {wire.output_field(form["route"]): attempt.output}
                     if attempt.output:
                         self._record.finish(
                             row_id,
@@ -253,14 +249,15 @@ class Server:
                                 cost_usd=attempt.cost_usd,
                             ),
                         )
-                        return {
-                            **reply,
-                            "usage": attempt.usage,
-                            "cost_usd": paid + attempt.cost_usd,
-                            "first_cost_usd": attempt.cost_usd,
-                            "cached": False,
-                            "attempts": retries.attempts,
-                        }
+                        return wire.reply(
+                            form["route"],
+                            attempt.output,
+                            attempt.usage,
+                            cost_usd=paid + attempt.cost_usd,
+                            first_cost_usd=attempt.cost_usd,
+                            cached=False,
+                            attempts=retries.attempts,
+                        )
                     paid += attempt.cost_usd
                     empty = ProviderUnavailable(
                         f"{form['provider']} sent an empty reply", status=200
@@ -300,26 +297,6 @@ class Server:
                 limit = self._limits.get(name, RateLimit())
                 gate = self._gates[name] = Gate(limit, pause, self._clock)
             return gate, pause
-
-    def _hold(self, call: wire.Call, reserve: float) -> _Meter:
-        with self._lock:
-            meter = self._meters.get(call.meter)
-            if meter is None:
-                # First sight since the start: what the meter paid before a restart counts.
-                meter = self._meters[call.meter] = _Meter(self._record.spent(call.meter))
-            held = meter.spent + meter.held
-            if held + reserve > call.ceiling_usd:
-                raise CeilingReached(
-                    f"meter {call.label!r} has {held:.6f} USD spent or held, and this call may "
-                    f"cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
-                )
-            meter.held += reserve
-            return meter
-
-    def _settle(self, meter: _Meter, reserve: float, cost: float) -> None:
-        with self._lock:
-            meter.held -= reserve
-            meter.spent += cost
 
 
 def _check(form: dict[str, Any]) -> None:
