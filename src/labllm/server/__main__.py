@@ -1,5 +1,7 @@
 """Start the gateway: ``python -m labllm.server [--settings FILE] [--port N] [--throwaway]``.
 
+It listens on loopback only; callers reach it through an SSH tunnel.
+
 Provider keys come from the environment, under the names LiteLLM reads, such as
 ``DEEPSEEK_API_KEY``, and ``TYPESAFE_API_KEY`` for Jev.
 """
@@ -24,8 +26,7 @@ def main(argv: list[str] | None = None) -> None:
     """Serve until interrupted."""
     parser = argparse.ArgumentParser(prog="python -m labllm.server", description=__doc__)
     parser.add_argument("--settings", type=Path, help="a TOML settings file")
-    parser.add_argument("--host", default="127.0.0.1", help="the address to listen on")
-    parser.add_argument("--port", type=int, default=8000, help="the port to listen on")
+    parser.add_argument("--port", type=int, default=8000, help="the loopback port to listen on")
     parser.add_argument(
         "--throwaway",
         action="store_true",
@@ -50,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
             limits=settings.limits,
             retry_budget_s=settings.retry_budget_s,
         )
-        httpd = server.http(args.host, args.port)
+        httpd = server.http("127.0.0.1", args.port)
         stack.callback(httpd.server_close)
         host, port = httpd.server_address[:2]
         log.info("serving on http://%s:%s", host, port)

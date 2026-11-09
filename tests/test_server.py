@@ -37,6 +37,7 @@ from labllm.client import HttpTransport
 from labllm.peak import MARGIN_S
 from labllm.retry import BUDGET_S
 from labllm.server import Attempt, Prices, Provider, Record, Server
+from labllm.server.__main__ import main
 from labllm.server.chat import LiteLLMChat
 from labllm.server.jev import TypeSafeJev
 from labllm.server.limits import RateLimit
@@ -209,6 +210,14 @@ def test_the_peak_margin_is_a_setting(tmp_path: Path) -> None:
     path = tmp_path / "settings.toml"
     path.write_text("peak_margin_minutes = 10\n")
     assert (load(path).peak_margin_s, load(None).peak_margin_s) == (600.0, MARGIN_S)
+
+
+def test_the_gateway_takes_no_address_to_listen_on_but_loopback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        main(["--host", "0.0.0.0"])
+    assert "unrecognized arguments: --host" in capsys.readouterr().err
 
 
 def test_rate_limits_and_the_retry_budget_are_settings(tmp_path: Path) -> None:
