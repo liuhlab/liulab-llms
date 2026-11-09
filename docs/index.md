@@ -1,6 +1,6 @@
 # liulab-llms
 
-Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling.
+Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling.
 
 ## Install it
 
@@ -16,13 +16,50 @@ same versions the tests ran on.
 
 ## Use it
 
-```python
-from labllm import greet
+Your code never holds a provider key. It talks to the lab gateway through an SSH tunnel you
+open, and finds it from one setting: `LABLLM_GATEWAY`, the tunnel's local address, such as
+`http://127.0.0.1:8000`.
 
-print(greet("lab"))
+Open a meter with a dollar ceiling, then call through it:
+
+```python
+from labllm import Gateway, Model
+
+gw = Gateway(repo="my-repo")
+model = Model("deepseek", "deepseek-v4-flash", max_output_tokens=2000)
+with gw.meter("first try", ceiling_usd=1.0) as m:
+    reply = m.chat(model, system="Answer in one word.", user="Is DNA a protein?")
+    print(reply.text, reply.cost_usd, reply.cached)
 ```
 
+The gateway keeps every answer. The same request sent again, by you or anyone in the lab,
+comes back from the cache at no cost. A call that could push the meter past its ceiling is
+refused before it is sent.
+
+When a call must stop your loop, it raises one of four errors, all under `Stopped`: the
+ceiling is reached, the provider's balance is used up, the provider is down, or the gateway
+cannot be reached. A request the provider calls malformed raises `Rejected`, and nothing
+retries it.
+
+In tests, `labllm.testing.FakeGateway` stands in for the gateway. You give it a function
+that plays the provider, and it keeps the same cache and ceiling, offline and free.
+
 The [API reference](api.md) has the full list, built from the docstrings in `src/`.
+
+## Keep reviews in git
+
+When a person reviews a unit, `task.save_review` adds one line to a file for that kind of
+unit, in the reviews folder your repo names. Commit that folder. A review outranks the
+models' answer until the unit's inputs change.
+
+Two people may add reviews on two branches at once. Tell git to keep both sides' lines when
+it merges, by adding this line to your repo's `.gitattributes`, with your folder's path:
+
+```text
+reviews/*.jsonl merge=union
+```
+
+When two lines review the same unit, the one saved later wins.
 
 ## Check your work
 

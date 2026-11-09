@@ -1,10 +1,14 @@
 # liulab-llms
 
-> **Replace this file.** This is the template's generic copy: it says how *any* Liu Lab repo
-> works, not what *this* one does. Run `/init`, then delete this line.
+Lab repos call language models through one lab gateway, which holds the provider keys,
+caches every response for the whole lab, and refuses a call that would cross its meter's
+ceiling. This package is the client for it, the gateway itself under the `gateway` extra,
+and an engine for model work over many units. seqforge is the first user, not the only one.
+Distribution name **`liulab-llms`**, import name **`labllm`**.
 
-One paragraph: what this package is for, who uses it, and the one thing that is easy to get
-wrong. Distribution name **`liulab-llms`**, import name **`labllm`**.
+Easy to get wrong: the cache key is the hash of the request form `labllm.wire` builds, so
+nothing that labels a call (meter, tag, person, repo, ceiling) may enter the form. The plain
+install never imports LiteLLM; a test pins it.
 
 ## Restraint
 
@@ -36,8 +40,9 @@ misfires, is as much a contribution as adding one.
 ## Layout
 
 ```text
-src/labllm/       the package — rename this directory first
-tests/            pytest, mirroring src/
+src/labllm/       the package: client.py, wire.py (request form, cache key), testing.py,
+                  engine.py, state.py (state file), reviews.py, server/ (the gateway)
+tests/            pytest; test_call_layer.py runs against every gateway in conftest.py
 docs/             the published site; docs/adr/ and docs/agents/ are agent-facing
 skills/           repo-local agent skills; `python skills/install.py --help`
 scripts/check.sh  the gate runner
@@ -119,6 +124,7 @@ example earns its keep. Say the surprising thing in one sentence and stop.
 | When | Read |
 | --- | --- |
 | Before changing code | `GLOSSARY.md`, then any ADR covering the area |
+| Before changing the wire or a gateway | `docs/adr/0001-the-call-layers-wire.md`, `tests/harness.py` |
 | Writing anything | `docs/agents/writing.md` |
 
 The issue tracker, triage labels and domain docs are the lab defaults, the page `/lab-setup`

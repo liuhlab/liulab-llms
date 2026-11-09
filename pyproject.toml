@@ -2,7 +2,7 @@
 
 [project]
 name = "liulab-llms"
-description = "Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling."
+description = "Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13"
@@ -18,7 +18,22 @@ classifiers = [
 ]
 # hatch-vcs reads the newest git tag. Never add a `version` key.
 dynamic = ["version"]
-dependencies = []
+# Pure Python with no dependencies of its own: it checks answers against a kind's schema.
+dependencies = ["fastjsonschema>=2.21"]
+
+# The gateway server, `python -m labllm.server`. pixi reads this extra as its `gateway` feature.
+[project.optional-dependencies]
+gateway = [
+    # Exact, and moved by hand: docs/adr/0006-the-gateway-server.md says when and why.
+    "litellm==1.106.6",
+    # libpq comes from conda-forge in pixi; outside pixi, add psycopg's `binary` extra.
+    "psycopg>=3.2",
+    "psycopg-pool>=3.2",
+    # Jev's own client. Not on conda-forge; pure Python with PyPI provenance, so a range.
+    "typesafe-sdk>=0.7.5,<0.8",
+    # The chat provider reads its errors. Any version the pinned LiteLLM takes.
+    "openai",
+]
 
 # ============================== build ==============================
 
@@ -57,12 +72,28 @@ vale = "3.19.0.*"
 markdownlint-cli2 = "*"
 # For conformance, which parses mkdocs.yml and runs in `default`.
 pyyaml = "*"
+python-fastjsonschema = ">=2.21"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+# The tests play providers' HTTP APIs under LiteLLM (httpx) and TypeSafe's SDK (httpx2).
+httpx = "*"
+httpx2 = "*"
 # Declared here too, not inherited: the tests run conformance, and a test environment shaped
 # differently from this one would import-error on every test.
 pyyaml = "*"
+
+# The gateway extra's packages from conda-forge, plus the PostgreSQL server: the tests start a
+# throwaway one, and so does `python -m labllm.server --throwaway`. LiteLLM stays a PyPI
+# package, from the extra: conda-forge has no build of the pinned release.
+[tool.pixi.feature.gateway.dependencies]
+psycopg = ">=3.2"
+psycopg-pool = ">=3.2"
+postgresql = "*"
+# The pinned LiteLLM asks for <9; left free, the conda solve picks 9 and the PyPI solve fails.
+importlib-metadata = "<9"
+# The same: the pinned LiteLLM asks for >=2.20,<3, and conda-forge's newest is 3.
+openai = ">=2.20,<3"
 
 # Exact: at 0.0.x nothing promises the next patch is compatible.
 [tool.pixi.feature.docs.dependencies]
@@ -76,10 +107,12 @@ docs = "zensical serve"
 docs-build = "zensical build --clean --strict"
 
 # `default` takes `test` so pyright can resolve pytest, and not `docs`, which exists so that
-# exactly one CI job installs it.
+# exactly one CI job installs it. `test` and `default` take `gateway`, so the one gate covers
+# the server. `gateway` alone is what the server's machine installs.
 [tool.pixi.environments]
-default = { features = ["test"], solve-group = "default" }
-test = { features = ["test"], solve-group = "default" }
+default = { features = ["test", "gateway"], solve-group = "default" }
+test = { features = ["test", "gateway"], solve-group = "default" }
+gateway = { features = ["gateway"], solve-group = "default" }
 docs = { features = ["docs"], solve-group = "default" }
 
 [tool.pixi.tasks]
@@ -182,7 +215,12 @@ addopts = [
     "--continue-on-collection-errors",
 ]
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # LiteLLM's response types mark TypedDict items `ReadOnly`, and pydantic warns the first
+    # time it builds them. LiteLLM's code, not ours, and harmless to a response we only read.
+    "ignore:Item.*on TypedDict class.*is using the `ReadOnly` qualifier:UserWarning",
+]
 
 # ============================== liulab ==============================
 # Read by `scripts/conformance.py`; its docstring has the rules.
