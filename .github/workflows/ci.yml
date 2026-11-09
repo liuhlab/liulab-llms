@@ -1,0 +1,134 @@
+# The gate, run on the pull request rather than on the branch.
+#
+# A job exists because a pixi ENVIRONMENT differs, not because a tool differs. The six
+# static steps share one environment and are one job; `test` runs in the `test`
+# environment; `docs` needs the heavy `docs` environment that nothing else installs, which
+# is the whole reason it is a job of its own.
+#
+# Every step invokes `pixi run <task>` and never a command line. The step list lives in
+# `pyproject.toml` — `check-static` names it once — so adding a step is one more word
+# there and nothing here. Conformance rule `workflow-step-tasks` holds every workflow in
+# the repo to it, and what it checks is that the command came from the task table: a step
+# may pass arguments after `--`, and the rule prints them rather than forbidding them.
+# It reads the `run:` line only, so `env:`, `working-directory:`, `shell:` and a local
+# composite action can still make a step do something no `pixi run` does here. Keeping
+# CI and a laptop the same is a habit this file keeps, not a property anything proves.
+#
+# Not shipped, deliberately: a `claude.yml`, because on a public repo anyone who can
+# comment could spend the API budget; container and benchmark workflows, because nothing
+# here needs them.
+name: ci
+
+on:
+  # `pull_request` is the trigger that matters. It tests the MERGE commit — the code that
+  # will exist after the merge, not the branch tip — and it is the only event that
+  # produces a run for a pull request from a fork. `push` is for `main` alone; on every
+  # branch it would run everything a second time for no new information.
+  push:
+    branches: [main]
+  pull_request:
+
+# Keyed on the workflow and the ref, so pushing again to a pull request cancels the run it
+# supersedes. `main` runs are never cancelled: a cancelled run on the branch everything
+# merges into is an unreliable gate, and a red-or-missing history is worse than a slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ruff, pyright, vale, markdownlint and conformance, all at once, all reported.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # A real checkout, not a source archive: `conformance` shells out to `git ls-files`
+      # and exits 2 without a `.git` — its "could not run", spelled apart from the 1 a
+      # broken rule exits, so a bad checkout never reads as a rule this repo failed. The
+      # default shallow depth is enough — it needs the file list, not the history.
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          environments: default
+          # Fail if `pixi.lock` no longer matches `pyproject.toml`, rather than silently
+          # solving something else. This is what makes CI run the versions the laptop ran.
+          locked: true
+      # `check-static`, not `check`: `check` is the static steps plus pytest, and pytest is
+      # the `test` job below, in the environment that owns it.
+      - run: pixi run check-static
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          environments: test
+          locked: true
+      # `-e test` is load-bearing: the `test` task exists in every environment, and without
+      # the flag pixi would run it in `default`, which this job did not install.
+      - run: pixi run -e test test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The one job that needs history. The version is dynamic and hatch-vcs reads the
+          # newest tag; a shallow clone carries no tags, so the wheel would be stamped as a
+          # dev build even on a released commit.
+          fetch-depth: 0
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          # No `environments`: `build` is a plain task, so the default environment has it.
+          locked: true
+      - run: pixi run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          # An empty upload is a green job that proved nothing.
+          if-no-files-found: error
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          environments: docs
+          locked: true
+      # `docs-build` is a task on the `docs` FEATURE, so pixi finds it in the one
+      # environment that has zensical and no `-e` flag is needed. The task carries
+      # `--strict`, so a dead link or a bad reference fails here — but not every kind of
+      # broken link, and not a `nav:` entry naming a missing file. The comment above
+      # `validation:` in `mkdocs.yml` lists what this job catches and what it does not, so
+      # a green run here is not a claim the site has no dead ends. This job builds the
+      # site and stops; publishing it is `docs.yml`, on `main`.
+      - run: pixi run docs-build
+
+  # init-repo:begin dogfood
+  # ------------------------------------------------------------------------------------
+  # TEMPLATE-ONLY, and the last job on purpose. `scripts/init_repo.py` deletes everything
+  # between these two markers, and the matching block in `pyproject.toml`. A workflow file
+  # every repo keeps cannot hold a template-only job that is deletable by path, so it is a
+  # delimited TRAILING block instead — which keeps removing it mechanical rather than YAML
+  # surgery, and means nothing generic can end up below it.
+  #
+  # No `needs:`, so it runs beside the other four rather than after them. Its body is the
+  # `dogfood` task, like every other job here, so the steps live in `pyproject.toml`.
+  # ------------------------------------------------------------------------------------
+  dogfood:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          environments: default
+          locked: true
+      # Renders all three shapes and runs each rendered repo's own `pixi run check`. It
+      # needs no network beyond this checkout and pixi: every scratch repo is built from
+      # the files already on disk, and each one installs from the lock file it inherited.
+      - run: pixi run dogfood
+  # init-repo:end dogfood

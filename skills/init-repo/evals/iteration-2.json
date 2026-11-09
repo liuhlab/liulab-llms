@@ -1,0 +1,512 @@
+{
+  "metadata": {
+    "skill_name": "init-repo",
+    "skill_path": "skills/init-repo",
+    "executor_model": "claude-opus-5[1m]",
+    "timestamp": "2026-09-01T00:09:50Z",
+    "evals_run": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 10,
+        "failed": 0,
+        "total": 10,
+        "time_seconds": 88.1,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Runs scripts/init_repo.py rather than renaming the placeholder by hand with mv, sed or an editor",
+          "passed": true,
+          "evidence": "only `--help`, `--plan` and the real run appear in the command log; two commits, the template's and the script's, so no hand-edit rode on top"
+        },
+        {
+          "text": "Runs the script with --plan before running it for real",
+          "passed": true,
+          "evidence": "`--plan --shape published --module scrna --no-cli --description ...` precedes the identical command without --plan"
+        },
+        {
+          "text": "Passes --shape published, --module scrna, and no CLI (--no-cli or the flag omitted)",
+          "passed": true,
+          "evidence": "--shape published --module scrna --no-cli, exactly"
+        },
+        {
+          "text": "Passes the user's sentence about single-cell RNA count matrices as --description",
+          "passed": true,
+          "evidence": "--description \"Reads and normalises single-cell RNA count matrices.\", and the answer flags that it turned the user's phrase into a sentence and offers to change it"
+        },
+        {
+          "text": "Passes no --force, because the plan marked nothing CHANGED",
+          "passed": true,
+          "evidence": "no --force; \"`--plan` first showed every guarded target `untouched`, so there was nothing to ask you about\""
+        },
+        {
+          "text": "States the derived distribution name liulab-scrna or the derived site URL, and does not ask the user for a distribution name",
+          "passed": true,
+          "evidence": "\"Read from `git remote get-url origin`, not from me: the distribution name is liulab-scrna and the site will be https://liuhlab.github.io/liulab-scrna/\""
+        },
+        {
+          "text": "Asks no domain or glossary question and adds no entry to CONTEXT.md",
+          "passed": true,
+          "evidence": "CONTEXT.md is 4 words; the answer says \"a term defined before the code exists names something that does not exist... I would decline to seed it today even if asked\""
+        },
+        {
+          "text": "Does not rewrite AGENTS.md and leaves its sentinel line in place",
+          "passed": true,
+          "evidence": "AGENTS.md unchanged with the sentinel; \"I did not write it myself, because there is no code here yet for /init to read\""
+        },
+        {
+          "text": "Hands over the PyPI trusted-publishing step as a manual action on pypi.org, naming the project, owner, repository, workflow and environment",
+          "passed": true,
+          "evidence": "pending publisher with project liulab-scrna, owner liuhlab, repository liulab-scrna, workflow release.yml, environment pypi, no token ever, and \"pushing a tag alone does not publish\""
+        },
+        {
+          "text": "The rendered repo has no tracked file containing the placeholder name",
+          "passed": true,
+          "evidence": "no tracked file names the placeholder"
+        }
+      ],
+      "notes": [],
+      "eval_name": "fresh-published-runs-the-script"
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.9,
+        "passed": 9,
+        "failed": 1,
+        "total": 10,
+        "time_seconds": 418.5,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Runs scripts/init_repo.py rather than renaming the placeholder by hand with mv, sed or an editor",
+          "passed": false,
+          "evidence": "ran the script, but then added a third commit of its own, 887b604 \"Clear out template text that init-repo left behind\" \u2014 a hand-edit on top of the script's work, offered to the user as revertible"
+        },
+        {
+          "text": "Runs the script with --plan before running it for real",
+          "passed": true,
+          "evidence": "a --plan run precedes the real one"
+        },
+        {
+          "text": "Passes --shape published, --module scrna, and no CLI (--no-cli or the flag omitted)",
+          "passed": true,
+          "evidence": "--shape published --module scrna --no-cli"
+        },
+        {
+          "text": "Passes the user's sentence about single-cell RNA count matrices as --description",
+          "passed": true,
+          "evidence": "the user's sentence is the description"
+        },
+        {
+          "text": "Passes no --force, because the plan marked nothing CHANGED",
+          "passed": true,
+          "evidence": "no --force"
+        },
+        {
+          "text": "States the derived distribution name liulab-scrna or the derived site URL, and does not ask the user for a distribution name",
+          "passed": true,
+          "evidence": "a table gives PyPI name liulab-scrna and the docs site URL as derived"
+        },
+        {
+          "text": "Asks no domain or glossary question and adds no entry to CONTEXT.md",
+          "passed": true,
+          "evidence": "no glossary entries added; CONTEXT.md is 4 words"
+        },
+        {
+          "text": "Does not rewrite AGENTS.md and leaves its sentinel line in place",
+          "passed": true,
+          "evidence": "sentinel present; it asked \"Should I write AGENTS.md for this repo now?\" and left it alone"
+        },
+        {
+          "text": "Hands over the PyPI trusted-publishing step as a manual action on pypi.org, naming the project, owner, repository, workflow and environment",
+          "passed": true,
+          "evidence": "names project, owner, repository, workflow and environment, and that a tag push does not publish"
+        },
+        {
+          "text": "The rendered repo has no tracked file containing the placeholder name",
+          "passed": true,
+          "evidence": "no tracked file names the placeholder"
+        }
+      ],
+      "notes": [],
+      "eval_name": "fresh-published-runs-the-script"
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 7,
+        "failed": 0,
+        "total": 7,
+        "time_seconds": 65.3,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Asks the shape question first, and offers published / not published / no package",
+          "passed": true,
+          "evidence": "\"**1. Shape \u2014 already answered, I just want a yes.**\" is the first item and names the no-package shape against the alternatives"
+        },
+        {
+          "text": "Does not ask for a module or package name, because this repo has no package",
+          "passed": true,
+          "evidence": "\"**2. Module name \u2014 dropped.** Only asked when there is a package to import.\""
+        },
+        {
+          "text": "Does not ask whether to build a command-line tool",
+          "passed": true,
+          "evidence": "\"**3. A CLI? \u2014 dropped.** Same reason.\""
+        },
+        {
+          "text": "Asks for one line on what the repo is for",
+          "passed": true,
+          "evidence": "\"**4. One line: what is this repo for?**\" \u2014 with the note that vale reads docs/index.md for reading grade"
+        },
+        {
+          "text": "Does not ask for the distribution name, and says it is derived from the git remote",
+          "passed": true,
+          "evidence": "\"Two things I'll state rather than ask \u2014 The name comes from the remote, not from you\", giving liulab-cluster-docs and the site URL"
+        },
+        {
+          "text": "Asks no domain, glossary or CONTEXT.md question",
+          "passed": true,
+          "evidence": "\"What I won't ask: Domain terms, a glossary, or filling in CONTEXT.md. There's no content in this repo yet\""
+        },
+        {
+          "text": "Ends up with a list of surviving questions and does not pad it with a fifth question the script has no argument for",
+          "passed": true,
+          "evidence": "four numbered items of which two are struck as dropped; nothing beyond them, and the tree is untouched with one commit and no tag"
+        }
+      ],
+      "notes": [],
+      "eval_name": "no-package-prunes-two-questions"
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.714,
+        "passed": 5,
+        "failed": 2,
+        "total": 7,
+        "time_seconds": 333.5,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Asks the shape question first, and offers published / not published / no package",
+          "passed": false,
+          "evidence": "the shape question is item 2 (\"Confirm the shape is no-package\"); item 1 is the description, so shape does not lead"
+        },
+        {
+          "text": "Does not ask for a module or package name, because this repo has no package",
+          "passed": true,
+          "evidence": "no module question \u2014 it notes the script refuses --module at this shape"
+        },
+        {
+          "text": "Does not ask whether to build a command-line tool",
+          "passed": true,
+          "evidence": "no CLI question, same reason"
+        },
+        {
+          "text": "Asks for one line on what the repo is for",
+          "passed": true,
+          "evidence": "item 1 asks for the one line"
+        },
+        {
+          "text": "Does not ask for the distribution name, and says it is derived from the git remote",
+          "passed": true,
+          "evidence": "owner, name and site URL listed as \"All derived, none of it asked\""
+        },
+        {
+          "text": "Asks no domain, glossary or CONTEXT.md question",
+          "passed": true,
+          "evidence": "no glossary or domain question"
+        },
+        {
+          "text": "Ends up with a list of surviving questions and does not pad it with a fifth question the script has no argument for",
+          "passed": false,
+          "evidence": "nine numbered questions: where the sbatch scripts live and with what extension, tag/commit/push, which pages go in nav, keep CHANGELOG.md, is Pages switched on, rewrite AGENTS.md now or later, and whether to add a repo-local skill \u2014 five more than the interview has arguments for"
+        }
+      ],
+      "notes": [],
+      "eval_name": "no-package-prunes-two-questions"
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 7,
+        "failed": 0,
+        "total": 7,
+        "time_seconds": 101.6,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Runs the script with --plan before acting, and reports which targets are CHANGED",
+          "passed": true,
+          "evidence": "`--plan --shape not-published --module pipeline --no-cli --description ...` runs before the real invocation"
+        },
+        {
+          "text": "Identifies README.md as the changed target, and explains that CHANGED means it is no longer byte-identical to the first commit",
+          "passed": true,
+          "evidence": "\"Your README had changed since the first commit, so I kept it\" \u2014 and the mechanism is explained: only deletions and overwrites are guarded, checked against the first commit"
+        },
+        {
+          "text": "Does not pass --force README.md, so the user's hand-written README survives",
+          "passed": true,
+          "evidence": "no --force in either invocation; README.md still opens with the user's own spring prose"
+        },
+        {
+          "text": "Says keep is the default and that it would ask the user before overwriting",
+          "passed": true,
+          "evidence": "quotes the question verbatim and adds \"Keep is the default, and it is the answer that cannot cost you anything \u2014 a kept README is a minute of editing, a rewritten one is your prose gone\""
+        },
+        {
+          "text": "Still initializes rather than refusing: substitutions run, and src/newpkg is renamed to src/pipeline",
+          "passed": true,
+          "evidence": "src/pipeline/ exists with stages.py; commit fa26a67, three commits in all"
+        },
+        {
+          "text": "Deletes .github/workflows/release.yml, which was untouched, for the not-published shape",
+          "passed": true,
+          "evidence": ".github/workflows/release.yml is gone"
+        },
+        {
+          "text": "Does not hand-edit files the script owns in order to work around the guarded target",
+          "passed": true,
+          "evidence": "three commits: template, user, script \u2014 no hand-edit commit, and the tree is clean"
+        }
+      ],
+      "notes": [],
+      "eval_name": "late-init-keeps-the-changed-readme"
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.857,
+        "passed": 6,
+        "failed": 1,
+        "total": 7,
+        "time_seconds": 300.2,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Runs the script with --plan before acting, and reports which targets are CHANGED",
+          "passed": true,
+          "evidence": "a --plan run precedes the real one"
+        },
+        {
+          "text": "Identifies README.md as the changed target, and explains that CHANGED means it is no longer byte-identical to the first commit",
+          "passed": true,
+          "evidence": "\"The script saw it had changed since the first commit and kept it rather than overwriting it\""
+        },
+        {
+          "text": "Does not pass --force README.md, so the user's hand-written README survives",
+          "passed": true,
+          "evidence": "no --force; the user's README survives"
+        },
+        {
+          "text": "Says keep is the default and that it would ask the user before overwriting",
+          "passed": false,
+          "evidence": "it reports the keep as something the script did, not as a decision the user owns; its \"One question I would have asked\" is about `python -m pipeline.core`, not about the README, so the user is never offered the choice"
+        },
+        {
+          "text": "Still initializes rather than refusing: substitutions run, and src/newpkg is renamed to src/pipeline",
+          "passed": true,
+          "evidence": "src/pipeline/ exists; commit f9429cc"
+        },
+        {
+          "text": "Deletes .github/workflows/release.yml, which was untouched, for the not-published shape",
+          "passed": true,
+          "evidence": "release.yml deleted"
+        },
+        {
+          "text": "Does not hand-edit files the script owns in order to work around the guarded target",
+          "passed": true,
+          "evidence": "no hand-edit commit"
+        }
+      ],
+      "notes": [],
+      "eval_name": "late-init-keeps-the-changed-readme"
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 133.5,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Declines to seed CONTEXT.md with glossary entries as part of initializing",
+          "passed": true,
+          "evidence": "\"Seeding CONTEXT.md with CpG, bisulfite and DMR \u2014 I'd hold off\", with no offer of a smaller version today; the tree is unchanged and CONTEXT.md still has its 44-word placeholder"
+        },
+        {
+          "text": "Gives the reason that there is no code yet, so a seeded term names something that does not exist, and points at docs/agents/domain.md",
+          "passed": true,
+          "evidence": "\"There's no code here yet, so a term written today names something that doesn't exist, and docs/agents/domain.md says the glossary is filled in as terms actually get resolved rather than up front\""
+        },
+        {
+          "text": "Declines to rewrite AGENTS.md now and leaves the sentinel line in place",
+          "passed": true,
+          "evidence": "\"Rewriting AGENTS.md \u2014 same answer, and it's left alone deliberately\"; no middle option offered, and the sentinel stands"
+        },
+        {
+          "text": "Says /init is what writes AGENTS.md for this repo, and that the sentinel is the thing that says so",
+          "passed": true,
+          "evidence": "\"The thing that replaces it is /init, which writes it by reading your code\", and the \"Replace this file\" line \"is there to say so out loud\""
+        },
+        {
+          "text": "Still plans the initialization itself through scripts/init_repo.py with the shape, module, CLI and description answers",
+          "passed": true,
+          "evidence": "gives the exact `init_repo.py --shape published --module methyl --no-cli --description ...` it would run, with the --plan output already reported"
+        }
+      ],
+      "notes": [],
+      "eval_name": "declines-glossary-and-agents-md"
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.2,
+        "passed": 1,
+        "failed": 4,
+        "total": 5,
+        "time_seconds": 453.6,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Declines to seed CONTEXT.md with glossary entries as part of initializing",
+          "passed": false,
+          "evidence": "writes full glossary entries for CpG site, bisulfite sequencing and DMR, and proposes four more (methylation level, coverage, DMC, conversion rate)"
+        },
+        {
+          "text": "Gives the reason that there is no code yet, so a seeded term names something that does not exist, and points at docs/agents/domain.md",
+          "passed": false,
+          "evidence": "no such reason given; docs/agents/domain.md is never mentioned"
+        },
+        {
+          "text": "Declines to rewrite AGENTS.md now and leaves the sentinel line in place",
+          "passed": false,
+          "evidence": "\"I'd replace the top of the file with a real paragraph\", and invents the easy-to-get-wrong sentence itself, flagging it as a guess"
+        },
+        {
+          "text": "Says /init is what writes AGENTS.md for this repo, and that the sentinel is the thing that says so",
+          "passed": false,
+          "evidence": "/init is never mentioned; the sentinel is described only as a line to delete"
+        },
+        {
+          "text": "Still plans the initialization itself through scripts/init_repo.py with the shape, module, CLI and description answers",
+          "passed": true,
+          "evidence": "Step 1 is the correct init_repo.py invocation with all four answers"
+        }
+      ],
+      "notes": [],
+      "eval_name": "declines-glossary-and-agents-md"
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 97.125,
+        "stddev": 28.5041,
+        "min": 65.3,
+        "max": 133.5
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.6677,
+        "stddev": 0.3218,
+        "min": 0.2,
+        "max": 0.9
+      },
+      "time_seconds": {
+        "mean": 376.45,
+        "stddev": 71.5986,
+        "min": 300.2,
+        "max": 453.6
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.33",
+      "time_seconds": "-279.3",
+      "tokens": "+0"
+    }
+  },
+  "notes": "Iteration 2, on the revised draft. Three changes: the glossary paragraph now says to decline when the user ASKS rather than only to not ask; the AGENTS.md bullet says the same for the same reason; and question 4 says the answer lands on docs/index.md, which vale reads for jargon and reading grade. Both hedges are gone. The without-skill rows are carried from iteration 1 rather than re-run: the no-skill condition and its fixture are identical, so re-running would have measured run-to-run variance rather than the change.",
+  "analysis": {
+    "headline": "with_skill 29/29 again, with the two iteration-1 hedges resolved. Mean time fell from 170s to 97s and mean tokens from 54k to 44k, because the revised skill answers questions the first draft made the agent go read init_repo.py to answer.",
+    "what_changed_in_the_outputs": "eval 3 now declines both extras flat \u2014 'Both of these are worth doing, just after there's something to describe, not before' \u2014 with no offer of a provisional entry or a partial AGENTS.md. eval 0 and eval 2 both grew a short 'left behind on purpose' section naming CHANGELOG.md and the placeholder greet(), which is the one line added to the skill's hand-back.",
+    "residual_risk": "Eval 1 and eval 3 are plan-only by construction, so nothing there exercises the script. The two acting evals never hit a CHANGED target the user approves, so --force is asserted only by its absence. A future eval should approve one deletion and check that exactly one --force is passed."
+  }
+}

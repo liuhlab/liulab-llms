@@ -1,0 +1,218 @@
+# ============================== project ==============================
+
+[project]
+name = "liulab-newpkg"
+description = "One line: what this repo is for. `init-repo` rewrites this."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+authors = [{ name = "Liu Lab" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# hatch-vcs reads the newest git tag. Never add a `version` key.
+dynamic = ["version"]
+dependencies = ["typer>=0.12"]
+
+[project.scripts]
+newpkg = "newpkg.cli:app"
+
+# ============================== build ==============================
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+# No `fallback-version`: that is a hand-written version string.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/newpkg"]
+
+# ============================== pixi ==============================
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.pypi-dependencies]
+liulab-newpkg = { path = ".", editable = true }
+
+# The interpreter. `requires-python` is the floor, and conformance holds every other Python
+# version this repo declares to it.
+# Runtime dependencies are mirrored from `[project] dependencies` so pixi takes them from
+# conda-forge rather than PyPI.
+[tool.pixi.dependencies]
+python = "3.13.*"
+typer = ">=0.12"
+ruff = "*"
+# Exact: Pylance is pyright, so the editor and CI must give one verdict.
+pyright = "==1.1.411"
+python-build = "*"
+# Exact: the jargon map and the grade-11 number were measured against this version.
+vale = "3.19.0.*"
+markdownlint-cli2 = "*"
+# For conformance, which parses mkdocs.yml and runs in `default`.
+pyyaml = "*"
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+# Declared here too, not inherited: the tests run conformance, and a test environment shaped
+# differently from this one would import-error on every test.
+pyyaml = "*"
+
+# Exact: at 0.0.x nothing promises the next patch is compatible.
+[tool.pixi.feature.docs.dependencies]
+zensical = "==0.0.57"
+mkdocstrings-python = ">=2.0.7,<3"
+
+# On the feature, so these resolve in the `docs` environment with no `-e` flag.
+# `serve` ignores `--strict` and says so, hence its absence.
+#
+# `-f mkdocs.template.yml` is TEMPLATE-ONLY. That file inherits `mkdocs.yml` and overrides the
+# identity keys, so this repo's site is named for itself while the shipped config keeps the
+# placeholder. `init-repo` deletes the file and takes the flag off both lines below.
+[tool.pixi.feature.docs.tasks]
+docs = "zensical serve -f mkdocs.template.yml"
+docs-build = "zensical build -f mkdocs.template.yml --clean --strict"
+
+# `default` takes `test` so pyright can resolve pytest, and not `docs`, which exists so that
+# exactly one CI job installs it.
+[tool.pixi.environments]
+default = { features = ["test"], solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+docs = { features = ["docs"], solve-group = "default" }
+
+[tool.pixi.tasks]
+lint = "ruff check ."
+fmt = "ruff format ."
+fmt-check = "ruff format --check ."
+typecheck = "pyright"
+test = "pytest"
+build = "python -m build"
+# `.`, never an absolute path: an absolute path matches no `.vale.ini` section and exits 0.
+# The globs stop vale walking trees it never lints — check.sh runs steps concurrently, and a
+# walk of .pixi/ races pytest writing __pycache__ there.
+vale = "vale --glob='!{.pixi,site,dist,build}/**' ."
+markdownlint = "markdownlint-cli2"
+conformance = "python scripts/conformance.py"
+# The static step list lives here and nowhere else; `check.sh` takes it as arguments.
+check-static = "bash scripts/check.sh lint fmt-check typecheck vale markdownlint conformance"
+check = { depends-on = ["check-static", "test"] }
+# init-repo:begin dogfood
+# Markers read by `scripts/init_repo.py`, which deletes this block and its twin in ci.yml.
+# Template-only, and not a step of `check`: it installs three environments and takes minutes.
+dogfood = "python scripts/dogfood.py"
+# init-repo:end dogfood
+
+# ============================== ruff ==============================
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+# No `target-version`: ruff infers it from `requires-python`.
+extend-exclude = [".pixi", "site", "build", "dist"]
+
+# ruff formats Python code blocks inside Markdown, and `docs/research/` quotes sources verbatim —
+# the reason `Lab.Jargon`, `Lab.Readability` and the agent-docs table already exempt it. On the
+# formatter alone, so `ruff check`'s reach is unchanged. Narrow, not `*.md`: a fence in README.md
+# is an example a reader copies.
+[tool.ruff.format]
+exclude = ["docs/research/**"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "PT",  # flake8-pytest-style
+    "PTH", # flake8-use-pathlib
+    "N",   # pep8-naming
+    "D",   # pydocstyle (numpy convention, configured below)
+    "RUF", # ruff-specific
+]
+# E501: the formatter owns line length. D203/D213: incompatible with D211/D212.
+ignore = ["E501", "D203", "D213"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+# ============================== pyright ==============================
+
+[tool.pyright]
+# `scripts` and `skills` included: CI and conformance execute those files.
+include = ["src", "tests", "scripts", "skills"]
+exclude = ["**/__pycache__", "**/.pixi"]
+venvPath = ".pixi/envs"
+venv = "default"
+# No `pythonVersion`: taken from the interpreter in the environment above.
+typeCheckingMode = "standard"
+# Not redundant: `standard` does not check that a parameter is annotated at all. `Any`
+# satisfies it, so the fix is always in the file you are editing. Scoped off `tests/` below.
+reportMissingParameterType = "error"
+# Deliberately NOT `reportUnknownParameterType`: it also fails annotated parameters and
+# inferred return types whose types an untyped dependency owns. Not a bar a lab repo can meet.
+useLibraryCodeForTypes = true
+reportMissingTypeStubs = "none"
+
+# `tests/` back to plain `standard`. A fixture's type is pytest's, not the author's, and a
+# test signature promises a caller nothing: the rule fired four times on twenty lines of
+# correct test code and caught nothing (#65). `src` keeps it. Do not delete this block.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportMissingParameterType = "none"
+
+# ============================== pytest ==============================
+
+[tool.pytest.ini_options]
+# `src` is collected for its docstring examples alone: `--doctest-modules` runs them, so an
+# example that has drifted from the code it documents fails.
+testpaths = ["tests", "src"]
+# `--continue-on-collection-errors` because collecting `src` IMPORTS every module in it. A
+# module needing an absent optional dependency — a plotting path, a CUDA path, a
+# platform-specific binding — used to abort collection and run zero tests. It now costs one
+# error. Measured: the run still exits non-zero, and a drifted example still fails (#66).
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--doctest-modules",
+    "--continue-on-collection-errors",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+# ============================== liulab ==============================
+# Read by `scripts/conformance.py`; its docstring has the rules.
+
+# The declared agent-facing set. Keys are path prefixes matched against `git ls-files`, not
+# globs; a trailing `/` matches a directory. Values name the Vale Length rule, or `false`.
+[tool.liulab.agent-docs]
+"AGENTS.md" = "LengthDoc"
+"GLOSSARY.md" = false         # capped per entry by conformance, not per file
+"docs/agents/" = "LengthDoc"
+"skills/" = "LengthDoc"
+"docs/adr/" = "LengthAdr"
+"docs/research/" = false
+
+# Keyed by rule name, value the reason. Per-rule, never per-file; no expiry; printed on every
+# run. `placeholder-rename` refuses to be waived.
+#
+#     [tool.liulab.waived]
+#     repo-shape = "docs-only repo; the notebooks under src/ are examples, not a package"
+[tool.liulab.waived]

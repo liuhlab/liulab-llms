@@ -1,0 +1,60 @@
+{
+  "skill_name": "template-dev",
+  "note": "Written with /skill-creator. Each prompt is a realistic contributor request that is easy to get wrong in a way that damages every repo made from this template afterwards. The agent is asked to plan, not to edit, so the graded artefact is the judgement. Baseline = the same repo with skills/template-dev/ absent.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "new-agent-doc-directory",
+      "prompt": "I want to add `docs/playbooks/` to this repo for agent-facing runbooks — same 1000-word cap as the other agent docs, kept out of the site nav and out of search. Write me the exact list of files I need to touch and what to change in each, in order. Don't edit anything yet.",
+      "expected_output": "A change list that touches every declaration of the convention in one commit: a new .vale.ini section placed after section 1 with all four Lab rules named, the table in docs/agents/writing.md, the [tool.liulab.agent-docs] keys in pyproject.toml, `search: exclude: true` front matter on the new pages, and no nav entry in mkdocs.yml. Reuses Lab.LengthDoc rather than inventing a new style rule.",
+      "files": [],
+      "assertions": [
+        "Names .vale.ini as a file that must change",
+        "Says the new .vale.ini section must go after the broad human-facing section, or states that section order is load-bearing because the later section wins",
+        "Says every Lab rule must be named explicitly in the new section, not only the length rule",
+        "Names the word-cap table in docs/agents/writing.md as needing the same change",
+        "Names [tool.liulab.agent-docs] in pyproject.toml as the declared agent-facing set that must gain the new key",
+        "Requires `search: exclude: true` front matter on the new pages and no mkdocs.yml nav entry for them",
+        "Reuses the existing Lab.LengthDoc rule rather than adding a new styles/Lab/*.yml file for the same 1000-word cap",
+        "Says the declarations must change in one commit, and treats the enumerating header comments as declarations that change with them",
+        "Applies the after-init-repo test: asks whether the new directory is still correct in a derived repo, and whether anything added points at template-only machinery"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "real-identity-in-mkdocs",
+      "prompt": "mkdocs.yml still says liulab-newpkg — site_url, site_name, repo_url and repo_name all point at a repo that doesn't exist. This repo is liuhlab/liulab-repo-template and its site will be at https://liuhlab.github.io/liulab-repo-template/. Fix those four keys. Tell me what you'd change before you change it.",
+      "expected_output": "Declines the edit. The placeholder identity is the shipped article: it is what the unwaivable `newpkg` grep covers, and init-repo fills these keys from the git remote in each derived repo.",
+      "files": [],
+      "assertions": [
+        "Declines to write the real repo identity into mkdocs.yml and recommends keeping the placeholder",
+        "Explains that the placeholder is what the `newpkg` rename check greps for, so filling it in removes the check",
+        "States that init-repo fills these keys in a derived repo, from the git remote"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "networked-check-on-pr-path",
+      "prompt": "Our docs have a bunch of external links and some of them are probably already dead. Add a link checker to `pixi run check` so a broken link fails the build like anything else. Tell me the plan first.",
+      "expected_output": "Declines to put it on the pull-request gate. An expensive, networked or non-deterministic check must never be able to fail a normal pull request; a link check belongs on its own trigger, and an offline relative-link check would be a different, acceptable proposal.",
+      "files": [],
+      "assertions": [
+        "Declines to add the external link checker to `pixi run check` / the check-static step list, and holds that line rather than offering to build it on request",
+        "Gives the reason as the rule that an expensive, networked or non-deterministic check must never be able to fail a normal pull request",
+        "Proposes an alternative off the pull-request path, such as a scheduled or separate workflow, or an offline-only link check"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "pointer-in-agents-md",
+      "prompt": "New contributors keep missing this repo's own contributor guidance. Add a 'Contributing to the template' section to AGENTS.md that points at skills/template-dev/SKILL.md and at the template-only dogfood CI job, so any agent opening this repo finds them. Draft the section and tell me where it goes.",
+      "expected_output": "Declines. AGENTS.md ships generic and init-repo leaves it alone, so a pointer to template-only machinery would ride into every derived repo and dangle there. The guidance is a skill precisely because a skill is auto-discovered and needs no pointer.",
+      "files": [],
+      "assertions": [
+        "Declines to add the pointer to AGENTS.md",
+        "Explains that AGENTS.md ships generic and init-repo leaves it alone, so the pointer would ride into every derived repo and dangle after the template-only files are deleted",
+        "States that the guidance is a skill because a skill is auto-discovered, so no pointer is needed"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+# The docs site. Built by zensical, which reads this file directly — there is no
+# `zensical.toml`, so the config stays portable back to mkdocs if the alpha goes wrong.
+# See docs/adr/0001-docs-site-on-zensical.md.
+#
+# These three carry the PLACEHOLDER identity on purpose. `init-repo` fills them from the
+# git remote, and until it does they contain `newpkg`, so the rename check already covers
+# them. A sibling repo publishes to a hostname that is not where the repo lives and
+# nothing noticed; a placeholder that must be renamed is the cheap fix.
+site_name: liulab-newpkg
+site_url: https://liuhlab.github.io/liulab-newpkg/
+repo_url: https://github.com/liuhlab/liulab-newpkg
+repo_name: liuhlab/liulab-newpkg
+site_description: "One line: what this repo is for. `init-repo` rewrites this."
+
+# The nav is EXPLICIT and lists only human-facing pages. Without it zensical builds the
+# navbar from the directory tree, which would put docs/adr/, docs/agents/ and
+# docs/research/ straight into the menu. It does nothing about search — that is what the
+# `search: exclude: true` front matter on those pages is for. Neither mechanism
+# substitutes for the other, and `exclude_docs:` is silently ignored, so both are needed.
+#
+# Add a human-facing page here when you write one. A nav entry naming a missing file builds
+# green and publishes a menu item that 404s, so conformance rule `nav-target-exists` fails
+# it instead. Never add a page under docs/adr/, docs/agents/ or docs/research/: conformance
+# rule `agent-docs-unpublished` fails the build if you do.
+nav:
+  - Home: index.md
+  - API reference: api.md
+
+# What `--strict` catches. Every row was built against the pinned zensical and watched, not
+# taken from what a strict mkdocs build used to do:
+#
+#   caught  link to a page that is not there   [text](gone.md)
+#   caught  dead anchor                        [text](api.md#gone)
+#   caught  unresolved mkdocstrings reference  [`pkg.Thing`][pkg.Thing]
+#   MISSED  nav: entry naming a missing file     - Gone: gone.md
+#   MISSED  absolute link                      [text](/gone/)
+#   MISSED  link with no `.md` extension       [text](api)
+#
+# Nothing below fixes the three MISSED rows and no setting does: zensical validates links
+# and not the nav, and it drops mkdocs' `absolute_links:` and `unrecognized_links:` keys in
+# silence, so writing them in would look like a check and be none. The nav row is caught by
+# conformance rule `nav-target-exists` instead, which fails a nav entry naming a file this
+# repo does not track — a setting nothing can be shown to honour is not a gate, so the check
+# went where it can be. Read the other two MISSED rows as work for a human. The third CAUGHT
+# row needs the mkdocstrings plugin, so a repo without one is down to two.
+#
+# `not_found:` and `anchors:` are zensical's defaults, spelled out because they are the two
+# keys mkdocs also understands. The five under them are zensical's own and mkdocs rejects
+# them, so a move back to mkdocs deletes this block as well as the pixi lines.
+# `unresolved_references:` is left off on purpose: it reads any bracketed word in prose,
+# `[draft]`, as a broken link reference and fails the build on it.
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+  unresolved_footnotes: true
+  unused_definitions: true
+  unused_footnotes: true
+  shadowed_definitions: true
+  shadowed_footnotes: true
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          # `src/` is inside the repo, so zensical watches it and `zensical serve`
+          # rebuilds when a docstring changes.
+          paths: [src]
+          options:
+            docstring_style: numpy
+            separate_signature: true
+            show_signature_annotations: true
+            show_symbol_type_heading: true
+            show_root_heading: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - toc:
+      permalink: true

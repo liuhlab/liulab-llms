@@ -1,0 +1,47 @@
+# Publishing the site to the `gh-pages` branch.
+#
+# Hand-written on purpose: zensical has no `gh-deploy` and none is planned, so the two
+# halves are spelled out — build into `./site`, then force-push that directory to
+# `gh-pages`. See `docs/adr/0001-docs-site-on-zensical.md`.
+#
+# The pull request already builds the site (the `docs` job in `ci.yml`). This workflow adds
+# only the publish, so it runs on `main` and nowhere else.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  # For re-publishing without a commit — a Pages setting changed, a deploy was lost.
+  workflow_dispatch:
+
+# The deploy force-pushes a branch of this repository. Nothing else here writes.
+permissions:
+  contents: write
+
+# NOT cancelled in flight, unlike `ci.yml`. This job replaces a published branch, and a run
+# killed between the build and the push leaves `gh-pages` holding half a site with nothing
+# queued to finish it. A superseded run is cheap; a half-written public site is not.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          environments: docs
+          locked: true
+      # Writes `./site`. `--clean --strict` live in the task, so this and a laptop build
+      # the same way.
+      - run: pixi run docs-build
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          # `gh-pages` holds built output and no history anyone reads: one commit,
+          # replaced whole each deploy. This is what `mkdocs gh-deploy --force` did.
+          force_orphan: true

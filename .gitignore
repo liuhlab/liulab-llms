@@ -1,0 +1,27 @@
+.pixi/
+# Build output: `site/` is the docs, `dist/` the wheel. `.cache/` is mkdocs' download cache,
+# which mkdocstrings fills with fetched inventories. mkdocs writes a `.gitignore` holding `*`
+# inside it, so it already hides itself — named here anyway, because a rule this repo relies
+# on should not live in a file a dependency happens to generate.
+site/
+.cache/
+dist/
+build/
+__pycache__/
+*.egg-info/
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+
+# Agent products. Never a blanket `/.claude/`: the skill symlinks under `.claude/skills/`
+# and `.agents/skills/` are TRACKED, because `init-repo` has to be discoverable the instant
+# you clone — before anyone could run the thing that runs installers. So this names the two
+# machine-local files inside `.claude/` and nothing else.
+.claude/settings.local.json
+.claude/worktrees/
+# Installer output, from `python skills/install.py --target codex|gemini`. Nobody's clone
+# needs another machine's copy.
+/.codex/
+/.gemini/

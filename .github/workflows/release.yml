@@ -1,0 +1,72 @@
+# Publishing to PyPI.
+#
+# Before the first release, PyPI needs a trusted publisher for this repository, this
+# workflow filename and the environment named below. That step is outside the repo, so
+# `init-repo` hands you the checklist rather than leaving a workflow that looks ready and
+# is not. There is no API token here, and there must never be one.
+#
+# Two jobs on purpose. Only `publish` holds the OIDC token that PyPI trusts, and it runs no
+# code from this repository — it downloads what `build` made and hands it over. A build
+# step and a publishing credential in one job means every build dependency can reach that
+# credential.
+#
+# A repo that does not publish deletes this file; `init-repo` does that for you.
+name: release
+
+on:
+  # NEVER a trigger that pushing `v0.0.0` can fire — a `push:` with no branch filter,
+  # `create`, or a `tags:` filter that admits it. `init-repo` pushes `v0.0.0` on a repo's
+  # first day so the version does not read as if a release already happened, and any of
+  # those would fire a PyPI publish right then, from a repo nobody has finished naming.
+  # Publishing a GitHub Release is a deliberate act by a person, so that is the trigger.
+  # This paragraph is the advice and conformance rule `release-trigger` is the enforcement;
+  # they say one thing, so they change together.
+  release:
+    types: [published]
+  # For a release whose publish failed on something outside the code — a missing trusted
+  # publisher, a PyPI outage. Choose the tag when you run it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # hatch-vcs reads the newest tag, and a shallow clone has none, so without this
+          # the release would be built and published as a dev version.
+          fetch-depth: 0
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          locked: true
+      # The same task the `build` job in `ci.yml` runs, so what is published was built the
+      # way every pull request already proved.
+      - run: pixi run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Name this environment in the PyPI trusted publisher too, if you set one there. Add
+    # required reviewers to it to put a person between a published Release and PyPI.
+    environment:
+      name: pypi
+    permissions:
+      # OIDC: GitHub mints a short-lived token, PyPI checks it came from this repository
+      # and this workflow. This is the only permission the job has.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      # PyPA's own pointer, which is what their trusted-publishing guide tells you to use:
+      # it moves with security fixes to the publishing action. `dist/` is its default.
+      - uses: pypa/gh-action-pypi-publish@release/v1

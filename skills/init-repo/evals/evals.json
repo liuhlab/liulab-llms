@@ -1,0 +1,71 @@
+{
+  "skill_name": "init-repo",
+  "note": "Written with /skill-creator, two iterations, results in iteration-1.json and iteration-2.json. Each eval runs in a scratch repo built the way GitHub's template button builds one — the template's working tree, re-initialized to a single commit — because init-repo's untouched check compares against that first commit. Two evals let the agent act on the tree, two ask it to plan only. Baseline = the same fixture with skills/init-repo/ and its two symlinks removed, so a baseline agent cannot read the skill while exploring. The agent is told it cannot ask follow-up questions and must pick the safe default, which is how eval 2 grades 'keep is the default' without an interactive human. Read iteration-1.json's analysis before adding an eval: most of these assertions do not discriminate, because init_repo.py's own docstring already teaches an unaided agent to drive it correctly.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "fresh-published-runs-the-script",
+      "prompt": "I just made this repo from the lab template and cloned it. Set it up for me. It's a Python library, we do want it on PyPI, the import name should be `scrna`, no command-line tool, and it's for reading and normalising single-cell RNA count matrices. Everything's committed, so go ahead.",
+      "expected_output": "Runs scripts/init_repo.py --plan, sees nothing CHANGED, then runs it for real with --shape published --module scrna --no-cli and the user's sentence as --description, and no --force. States the derived distribution name rather than asking for it. Asks no domain question, leaves AGENTS.md and its sentinel alone, and finishes by handing over the PyPI trusted-publisher form.",
+      "files": ["a fresh single-commit template copy, remote liuhlab/liulab-scrna"],
+      "assertions": [
+        "Runs scripts/init_repo.py rather than renaming the placeholder by hand with mv, sed or an editor",
+        "Runs the script with --plan before running it for real",
+        "Passes --shape published, --module scrna, and no CLI (--no-cli or the flag omitted)",
+        "Passes the user's sentence about single-cell RNA count matrices as --description",
+        "Passes no --force, because the plan marked nothing CHANGED",
+        "States the derived distribution name liulab-scrna or the derived site URL, and does not ask the user for a distribution name",
+        "Asks no domain or glossary question and adds no entry to GLOSSARY.md",
+        "Does not rewrite AGENTS.md and leaves its sentinel line in place",
+        "Hands over the PyPI trusted-publishing step as a manual action on pypi.org, naming the project, owner, repository, workflow and environment",
+        "The rendered repo has no tracked file containing the placeholder name"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "no-package-prunes-two-questions",
+      "prompt": "This repo is going to hold our cluster docs and a handful of sbatch scripts — there's no Python package in it at all and there never will be. It came from the lab template. Before you touch anything: what are you going to ask me, in order? Just list the questions. Don't run anything yet.",
+      "expected_output": "The shape question first, then — because the answer is 'no package' — the one-line description and nothing else. The module and CLI questions are pruned rather than asked and discarded. The distribution name is stated as derived from the git remote, and no domain question appears.",
+      "files": ["a fresh single-commit template copy, remote liuhlab/liulab-cluster-docs"],
+      "assertions": [
+        "Asks the shape question first, and offers published / not published / no package",
+        "Does not ask for a module or package name, because this repo has no package",
+        "Does not ask whether to build a command-line tool",
+        "Asks for one line on what the repo is for",
+        "Does not ask for the distribution name, and says it is derived from the git remote",
+        "Asks no domain, glossary or GLOSSARY.md question",
+        "Ends up with a list of surviving questions and does not pad it with a fifth question the script has no argument for"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "late-init-keeps-the-changed-readme",
+      "prompt": "I made this repo from the template months ago, wrote a bunch of code in it, and never got round to initializing it. It's a Python library called `pipeline` for turning raw sequencer output into per-sample QC reports; no CLI; we install it from git, not PyPI. Can you still initialize it?",
+      "expected_output": "Runs --plan, reports README.md as CHANGED, keeps it rather than forcing the overwrite, and says it would ask first with keep as the default. Still initializes: the rename runs, src/newpkg becomes src/pipeline, and release.yml goes because that target was untouched.",
+      "files": ["a template copy with a second commit that rewrote README.md and added src/newpkg/stages.py, remote liuhlab/liulab-pipeline"],
+      "assertions": [
+        "Runs the script with --plan before acting, and reports which targets are CHANGED",
+        "Identifies README.md as the changed target, and explains that CHANGED means it is no longer byte-identical to the first commit",
+        "Does not pass --force README.md, so the user's hand-written README survives",
+        "Says keep is the default and that it would ask the user before overwriting",
+        "Still initializes rather than refusing: substitutions run, and src/newpkg is renamed to src/pipeline",
+        "Deletes .github/workflows/release.yml, which was untouched, for the not-published shape",
+        "Does not hand-edit files the script owns in order to work around the guarded target"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "declines-glossary-and-agents-md",
+      "prompt": "Initializing this new repo — it's a methylation analysis library, module name `methyl`, no CLI, published to PyPI, for calling differentially methylated regions from bisulfite sequencing. While you're at it, seed GLOSSARY.md with our domain terms (CpG, bisulfite, DMR) and rewrite AGENTS.md properly, since the one in here is generic boilerplate. Tell me the plan before you do any of it.",
+      "expected_output": "Plans the four-question initialization through scripts/init_repo.py, and declines both extras: no glossary seeding at creation, because there is no code for a term to name, which the lab's domain-docs default from /lab-setup forbids; and no AGENTS.md rewrite, because /init writes it later and the sentinel line is what says so.",
+      "files": ["a fresh single-commit template copy, remote liuhlab/liulab-methyl"],
+      "assertions": [
+        "Declines to seed GLOSSARY.md with glossary entries as part of initializing",
+        "Gives the reason that there is no code yet, so a seeded term names something that does not exist, and points at the lab's domain-docs default",
+        "Declines to rewrite AGENTS.md now and leaves the sentinel line in place",
+        "Says /init is what writes AGENTS.md for this repo, and that the sentinel is the thing that says so",
+        "Still plans the initialization itself through scripts/init_repo.py with the shape, module, CLI and description answers"
+      ]
+    }
+  ]
+}
