@@ -256,9 +256,9 @@ class UnitCost:
     """What one unit's calls cost in one pass, and how long the unit took.
 
     `spent_usd` is what its calls paid now, zero for a cache replay; `first_cost_usd` is what
-    the same replies cost when first paid. `requests` counts every call the unit sent,
-    answered or not, with the gateway's retries of each answered one, and `cache_hits` those
-    the cache answered. `usage` sums the numbers in the replies' usage, key by key, replays
+    the same replies cost when first paid. `requests` counts the requests its calls sent
+    providers, retries included, and `cache_hits` the calls the cache answered, which send
+    none. `usage` sums the numbers in the replies' usage, key by key, replays
     included. `seconds` runs on the gateway client's clock from the unit's first request to
     its ending; None if it sent none.
     """

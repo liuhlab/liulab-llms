@@ -319,6 +319,25 @@ def test_an_empty_reply_is_paid_and_tried_again(conninfo: str) -> None:
     ]
 
 
+def test_a_failed_calls_paid_attempts_reach_the_caller(conninfo: str) -> None:
+    attempts = iter([Attempt(output="", usage={}, cost_usd=0.25)])
+
+    def empty_then_exhausted(form: dict[str, Any]) -> Attempt:
+        try:
+            return next(attempts)
+        except StopIteration:
+            raise ProviderExhausted("no balance") from None
+
+    with (
+        gateway(conninfo, {"chat": empty_then_exhausted}) as gw,
+        gw.meter("paid", ceiling_usd=1.0) as m,
+        pytest.raises(ProviderExhausted) as failed,
+    ):
+        m.chat(CHAT, user="hello")
+    assert (failed.value.cost_usd, failed.value.attempts) == (0.25, 2)
+    assert (m.spent_usd, m.requests) == (0.25, 2)
+
+
 def sent_at(clock: FakeClock, times: list[tuple[str, float]], text: str = "abc") -> Provider:
     """A chat provider answering `text` that keeps each attempt's user message and time."""
 

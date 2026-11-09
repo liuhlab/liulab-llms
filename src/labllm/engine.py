@@ -19,7 +19,7 @@ import fastjsonschema
 
 from labllm.client import ChatReply, Gateway, JevReply, Meter
 from labllm.clock import Clock
-from labllm.errors import Stopped
+from labllm.errors import Rejected, Stopped
 from labllm.model import Model
 from labllm.reviews import _NO_ANSWER, Review, Reviews, _holding
 from labllm.state import (
@@ -210,19 +210,22 @@ class Unit:
         with self._lock:
             if self._first is None:
                 self._first = self._clock.now()
-            self._requests += 1
         try:
             reply = call()
-        except Stopped as e:
-            self._stop.halt(e)
-            # A call the stop ended unsent says so as a call never sent does.
-            self._met(str(e) if str(e) == self._stop.message else f"{e.reason}: {e}")
+        except (Stopped, Rejected) as e:
+            with self._lock:
+                self._spent += e.cost_usd
+                self._requests += e.attempts
+            if isinstance(e, Stopped):
+                self._stop.halt(e)
+                # A call the stop ended unsent says so as a call never sent does.
+                self._met(str(e) if str(e) == self._stop.message else f"{e.reason}: {e}")
             raise
         with self._lock:
             self._spent += reply.cost_usd
             self._first_cost += reply.first_cost_usd
             self._cache_hits += bool(reply.cached)
-            self._requests += max(reply.attempts - 1, 0)  # the gateway's retries
+            self._requests += reply.attempts
             if isinstance(reply.usage, Mapping):
                 _add_usage(self._usage, reply.usage)
         return reply
@@ -297,7 +300,7 @@ class PassResult:
 
     `counts` has every ending and not-ending a pass gives, zeros included. `stopped` is the
     reason of the `Stopped` error that stopped the pass, or None. The dollars, requests and
-    cache hits are the pass's meter's counters.
+    cache hits are the pass's meter's counters, each the sum of its units'.
     """
 
     pass_id: int

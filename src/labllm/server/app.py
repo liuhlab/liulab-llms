@@ -190,73 +190,82 @@ class Server:
         arrival = next(self._arrivals)
         retries = Retries(self._clock, self._retry_budget_s)
         paid = 0.0
-        while True:
-            turn = gate.wait(arrival, tokens)
-            try:
-                if call.off_peak_only:
-                    off_peak = self._prices.price(form).off_peak
-                    peak.check(off_peak, self._clock.now(), self._peak_margin_s)
-                meter = self._hold(call, reserve)
-            except BaseException:
-                turn.cancel()
-                raise
-            retries.attempts += 1
-            sent = self._clock.now()
-            done = Row(call, key, sent, sent, attempt=retries.attempts, waited_s=sent - started)
-            input_tokens = None
-            try:
-                attempt = provider(form)
-                input_tokens = attempt.input_tokens
-            except Exception as e:
-                failure = unreadable(e, form["provider"])
-                self._settle(meter, reserve, 0.0)
-                self._record.add(self._ended(done, error=failure.reason, message=str(failure)))
-                if not isinstance(failure, ProviderUnavailable):
+        try:
+            while True:
+                turn = gate.wait(arrival, tokens)
+                try:
+                    if call.off_peak_only:
+                        off_peak = self._prices.price(form).off_peak
+                        peak.check(off_peak, self._clock.now(), self._peak_margin_s)
+                    meter = self._hold(call, reserve)
+                except BaseException:
+                    turn.cancel()
                     raise
-                # Overload or no answer at all: every caller of this provider waits it out.
-                pause.extend(until := retries.next_try(failure))
-                log.info(
-                    "pausing %s until %.1f s from now: %s", form["provider"], until - sent, failure
-                )
-                again = retries.again(failure)
-            else:
-                self._settle(meter, reserve, attempt.cost_usd)
-                reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
-                if attempt.output:
+                retries.attempts += 1
+                sent = self._clock.now()
+                done = Row(call, key, sent, sent, attempt=retries.attempts, waited_s=sent - started)
+                input_tokens = None
+                try:
+                    attempt = provider(form)
+                    input_tokens = attempt.input_tokens
+                except Exception as e:
+                    failure = unreadable(e, form["provider"])
+                    self._settle(meter, reserve, 0.0)
+                    self._record.add(self._ended(done, error=failure.reason, message=str(failure)))
+                    if not isinstance(failure, ProviderUnavailable):
+                        raise
+                    # Overload or no answer at all: every caller of this provider waits it out.
+                    pause.extend(until := retries.next_try(failure))
+                    log.info(
+                        "pausing %s until %.1f s from now: %s",
+                        form["provider"],
+                        until - sent,
+                        failure,
+                    )
+                    again = retries.again(failure)
+                else:
+                    self._settle(meter, reserve, attempt.cost_usd)
+                    reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
+                    if attempt.output:
+                        self._record.add(
+                            self._ended(
+                                done,
+                                reply=reply,
+                                usage=attempt.usage,
+                                response=attempt.response,
+                                cost_usd=attempt.cost_usd,
+                            )
+                        )
+                        return {
+                            **reply,
+                            "usage": attempt.usage,
+                            "cost_usd": paid + attempt.cost_usd,
+                            "first_cost_usd": attempt.cost_usd,
+                            "cached": False,
+                            "attempts": retries.attempts,
+                        }
+                    paid += attempt.cost_usd
+                    empty = ProviderUnavailable(
+                        f"{form['provider']} sent an empty reply", status=200
+                    )
                     self._record.add(
                         self._ended(
                             done,
-                            reply=reply,
+                            error=empty.reason,
+                            message=str(empty),
                             usage=attempt.usage,
                             response=attempt.response,
                             cost_usd=attempt.cost_usd,
                         )
                     )
-                    return {
-                        **reply,
-                        "usage": attempt.usage,
-                        "cost_usd": paid + attempt.cost_usd,
-                        "first_cost_usd": attempt.cost_usd,
-                        "cached": False,
-                        "attempts": retries.attempts,
-                    }
-                paid += attempt.cost_usd
-                empty = ProviderUnavailable(f"{form['provider']} sent an empty reply", status=200)
-                self._record.add(
-                    self._ended(
-                        done,
-                        error=empty.reason,
-                        message=str(empty),
-                        usage=attempt.usage,
-                        response=attempt.response,
-                        cost_usd=attempt.cost_usd,
-                    )
-                )
-                again = retries.again(empty)
-            finally:
-                turn.done(input_tokens)
-            started = self._clock.now()
-            self._clock.sleep_until(again)
+                    again = retries.again(empty)
+                finally:
+                    turn.done(input_tokens)
+                started = self._clock.now()
+                self._clock.sleep_until(again)
+        except (Stopped, Rejected, PeakHours) as e:
+            e.cost_usd, e.attempts = paid, retries.attempts
+            raise
 
     def _ended(self, row: Row, **fields: Any) -> Row:
         return dataclasses.replace(row, finished_at=self._clock.now(), **fields)

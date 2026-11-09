@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from harness import CHAT, HOUR, MONDAY, PEAK, PRICES
-from labllm import Gateway, GatewayUnreachable
+from labllm import Gateway, GatewayUnreachable, ProviderExhausted
 from labllm.testing import FakeClock, FakeGateway
 
 
@@ -106,6 +106,24 @@ def test_a_call_waiting_through_peak_holds_up_no_other_call() -> None:
         clock.go.set()
         assert waiting.result(timeout=5).text == "abc"
     assert m.requests == 2
+
+
+class Answering:
+    """Answers every request with one status and body."""
+
+    def __init__(self, status: int, body: dict[str, object]) -> None:
+        self.status, self.body = status, json.dumps(body).encode()
+
+    def send(self, path: str, body: bytes) -> tuple[int, bytes]:
+        return self.status, self.body
+
+
+def test_an_error_that_counts_no_cost_or_attempts_counts_nothing() -> None:
+    gw = Gateway(repo="tests", transport=Answering(402, {"error": "provider_exhausted"}))
+    with gw.meter("old", ceiling_usd=1.0) as m, pytest.raises(ProviderExhausted) as failed:
+        m.chat(CHAT, user="hello")
+    assert (failed.value.cost_usd, failed.value.attempts) == (0.0, 0)
+    assert (m.spent_usd, m.requests) == (0.0, 0)
 
 
 def test_an_answer_no_client_understands_stops_the_caller() -> None:

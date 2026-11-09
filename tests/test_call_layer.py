@@ -67,7 +67,7 @@ def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) ->
     assert again.cost_usd == 0.0
     assert again.first_cost_usd == pytest.approx(first.cost_usd)
     assert (m.spent_usd, m.first_cost_usd, m.requests, m.cache_hits) == pytest.approx(
-        (0.03, 0.06, 2, 1)
+        (0.03, 0.06, 1, 1)
     )
     paid, hit = harness.record()
     assert hit.key == paid.key
@@ -281,6 +281,22 @@ def test_a_provider_response_the_gateway_cannot_read_is_tried_again(harness: Har
     assert [e.error for e in harness.record()] == ["provider_unavailable", None]
 
 
+def test_a_failed_calls_requests_reach_the_caller_and_its_meter(harness: Harness) -> None:
+    failures = iter([ProviderUnavailable("busy"), ProviderExhausted("no balance")])
+
+    def failing(form: dict[str, Any]) -> str:
+        raise next(failures)
+
+    harness.provider(failing)
+    with (
+        harness.client().meter("failed", ceiling_usd=0.1) as m,
+        pytest.raises(ProviderExhausted) as failed,
+    ):
+        m.chat(CHAT, user="hello")
+    assert (failed.value.attempts, failed.value.cost_usd) == (2, 0.0)
+    assert (m.requests, m.cache_hits) == (2, 0)
+
+
 def test_an_empty_reply_is_tried_again_and_never_cached(harness: Harness) -> None:
     replies = iter(["", "abc"])
     harness.provider(lambda form: next(replies))
@@ -397,7 +413,7 @@ def test_jev_and_chat_calls_share_a_meters_ceiling_and_the_record(harness: Harne
         with pytest.raises(CeilingReached):
             m.chat(CHAT, user="hello")  # 0.36 spent and 0.10 held would cross 0.40
         r = m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")
-    assert (r.cached, m.spent_usd, m.requests, m.cache_hits) == pytest.approx((True, 0.36, 2, 1))
+    assert (r.cached, m.spent_usd, m.requests, m.cache_hits) == pytest.approx((True, 0.36, 1, 1))
     assert [(e.cached, e.tag) for e in harness.record()] == [(False, "GSE1"), (True, "GSE1")]
 
 

@@ -226,7 +226,7 @@ def test_a_pass_returns_counts_and_its_meters_totals(task: Task) -> None:
     result = run(task, k, ["b", "a", "c"])
     assert result.counts == {"settled": 2, "unsettled": 0, "refused": 0, "unfinished": 0, "held": 1}
     assert result.stopped is None
-    assert (result.requests, result.cache_hits) == (2, 1)
+    assert (result.requests, result.cache_hits) == (1, 1)
     # One output token per reply character: '{"words": ["blue"]}' is 19, red green's is 27.
     assert result.spent_usd == pytest.approx(0.019)
     assert result.first_cost_usd == pytest.approx(0.019 + 0.027)
@@ -331,7 +331,7 @@ def test_rerunning_after_deleting_the_state_file_rebuilds_the_answers_from_the_c
     with Task(tmp_path / "t", gateway=fake.client(), reviews=tmp_path / "r") as t:
         result = run(t, kind(), list(TEXTS))
         assert answers(t) == before
-    assert (result.requests, result.cache_hits, result.spent_usd) == (3, 3, 0.0)
+    assert (result.requests, result.cache_hits, result.spent_usd) == (0, 3, 0.0)
 
 
 def test_a_state_file_of_an_unknown_layout_is_refused(tmp_path: Path, fake: FakeGateway) -> None:
@@ -661,7 +661,7 @@ def test_rerunning_a_stopped_pass_resumes_it(task: Task) -> None:
     again = run(task, kind(), keys)
     assert again.stopped is None
     assert again.counts["settled"] == 3
-    assert (again.requests, again.cache_hits) == (3, 1)
+    assert (again.requests, again.cache_hits) == (2, 1)
     # a replays free; b's 19-character reply and c's 34 are paid now.
     assert again.spent_usd == pytest.approx(0.019 + 0.034)
     assert again.first_cost_usd == pytest.approx(0.027 + 0.019 + 0.034)
@@ -690,7 +690,7 @@ def test_each_unit_records_its_cost_and_time_per_pass(tmp_path: Path) -> None:
     assert (paid.requests, paid.cache_hits, paid.seconds) == (2, 0, 4.0)
     assert paid.usage == {"input_tokens": 8, "output_tokens": 38}
     assert (replayed.spent_usd, replayed.first_cost_usd) == pytest.approx((0.0, 0.038))
-    assert (replayed.requests, replayed.cache_hits, replayed.seconds) == (2, 2, 0.0)
+    assert (replayed.requests, replayed.cache_hits, replayed.seconds) == (0, 2, 0.0)
     assert replayed.usage == paid.usage
 
 
@@ -707,6 +707,32 @@ def test_a_units_requests_count_the_gateways_retries(tmp_path: Path) -> None:
     with open_task(tmp_path, fake) as t:
         k = kind()
         run(t, k, ["b"])
+        result = run(t, k, ["a", "b"])
+        (_, replayed), (paid,) = t.outcomes(k, "b"), t.outcomes(k, "a")
+    assert replayed.cost is not None
+    assert paid.cost is not None
+    assert (replayed.cost.requests, paid.cost.requests) == (0, 1)
+    assert (result.requests, result.cache_hits) == (1, 1)
+
+
+def test_a_failed_calls_paid_attempts_count_in_the_unit_and_the_pass(tmp_path: Path) -> None:
+    replies = iter([""])
+
+    def empty_then_exhausted(form: dict[str, Any]) -> str:
+        try:
+            return next(replies)
+        except StopIteration:
+            raise ProviderExhausted("no balance") from None
+
+    by_input = {WRITER.name: Price(input_usd_per_token=0.001, output_usd_per_token=0.001)}
+    fake = FakeGateway(empty_then_exhausted, prices=by_input)
+    with open_task(tmp_path, fake) as t:
+        k = kind()
+        result = run(t, k, ["b"])
         (outcome,) = t.outcomes(k, "b")
+    # The empty reply paid for "blue", its four characters of input.
     assert outcome.cost is not None
-    assert (outcome.ending, outcome.cost.requests) == ("settled", 2)
+    assert (outcome.ending, outcome.cost.requests) == ("unfinished", 2)
+    assert outcome.cost.spent_usd == pytest.approx(0.004)
+    assert (result.stopped, result.requests) == ("provider_exhausted", 2)
+    assert result.spent_usd == pytest.approx(0.004)

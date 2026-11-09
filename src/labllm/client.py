@@ -7,7 +7,7 @@ import math
 import os
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Protocol
@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from labllm import wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import GatewayUnreachable, PeakHours, Stopped
+from labllm.errors import GatewayUnreachable, PeakHours, Rejected, Stopped
 from labllm.model import Model
 
 log = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ class ChatReply:
 
     `cost_usd` is what this call paid, failed attempts included, zero on a cache hit;
     `first_cost_usd` is what the answer cost when it was first paid. `attempts` counts the
-    requests the gateway sent
-    the provider for this call, retries included: zero on a cache hit.
+    requests the gateway sent the provider for this call, retries included: zero on a cache
+    hit.
     """
 
     text: str
@@ -172,8 +172,13 @@ class Gateway:
             raise ValueError(f"ceiling_usd must be a number of dollars, not {ceiling_usd!r}")
         return Meter(self, label, float(ceiling_usd), off_peak_only)
 
-    def _send(self, path: str, body: bytes, wake: threading.Event) -> dict[str, Any] | None:
-        """Return the reply, or None if `wake` ended a wait for off-peak hours."""
+    def _send(
+        self, path: str, body: bytes, wake: threading.Event, paid: Callable[[float, int], None]
+    ) -> dict[str, Any] | None:
+        """Return the reply, or None if `wake` ended a wait for off-peak hours.
+
+        A peak reply's cost and attempts go to `paid` before the wait.
+        """
         deadline = self._clock.now() + self.connect_retry_s
         delay = 0.5
         while True:
@@ -193,6 +198,7 @@ class Gateway:
             try:
                 return wire.decode_response(status, out)
             except PeakHours as e:
+                paid(e.cost_usd, e.attempts)
                 log.info("%s; waiting", e)
                 # A gateway clock a little behind this one must not cause a burst of resends.
                 self._clock.sleep_until(max(e.until, sent + 1.0), wake)
@@ -205,9 +211,10 @@ class Gateway:
 class Meter:
     """Labels, counts and limits a group of calls. Open one with `Gateway.meter`.
 
-    The counters cover every reply so far: `spent_usd` paid now, `first_cost_usd` as first
-    paid, `requests` answered, and how many of them were `cache_hits`. `id` is the meter's
-    identity on the gateway.
+    The counters cover every call so far: `spent_usd` paid now, failed calls included;
+    `first_cost_usd`, the answers as first paid; `requests` the gateway sent providers, retries
+    included; and `cache_hits`, the calls the cache answered, which send none. `id` is the
+    meter's identity on the gateway.
 
     Every call raises a `Stopped` subclass when the caller's loop must stop, and `Rejected`
     when the request is a bug. An off-peak-only call that meets peak hours waits, holding no
@@ -301,7 +308,15 @@ class Meter:
             repo=self._gateway.repo,
             tag=tag,
         )
-        r = None if self._wake.is_set() else self._gateway._send(path, call.encode(), self._wake)
+        try:
+            r = (
+                None
+                if self._wake.is_set()
+                else self._gateway._send(path, call.encode(), self._wake, self._paid)
+            )
+        except (Stopped, Rejected) as e:
+            self._paid(e.cost_usd, e.attempts)
+            raise
         if r is None:
             with self._lock:
                 stopped = self._stopped
@@ -309,13 +324,19 @@ class Meter:
             raise type(stopped)(str(stopped))
         try:
             cost, first, cached = float(r["cost_usd"]), float(r["first_cost_usd"]), r["cached"]
-            # A gateway older than retries sends no count: one attempt, or none for a hit.
+            # A reply with no count of attempts had one, or none for a hit.
             r["attempts"] = int(r.get("attempts", 0 if cached else 1))
         except (KeyError, TypeError, ValueError) as e:
             raise GatewayUnreachable(f"the gateway's reply lacks {e}") from e
         with self._lock:
             self.spent_usd += cost
             self.first_cost_usd += first
-            self.requests += 1
+            self.requests += r["attempts"]
             self.cache_hits += bool(cached)
         return r
+
+    def _paid(self, cost_usd: float, attempts: int) -> None:
+        """Count what a call that brought no answer paid and sent."""
+        with self._lock:
+            self.spent_usd += cost_usd
+            self.requests += attempts

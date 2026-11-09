@@ -209,60 +209,64 @@ class FakeGateway:
         )
         retries = Retries(self.clock)
         paid = 0.0
-        while True:
-            with self._lock:
-                if call.off_peak_only:
-                    peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
-                held = self._spent[meter] + self._reserved[meter]
-                if held + reserve > call.ceiling_usd:
-                    raise CeilingReached(
-                        f"meter {call.label!r} has {held:.6f} USD spent or held, and this call "
-                        f"may cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
-                    )
-                self._reserved[meter] += reserve
-            retries.attempts += 1
-            try:
-                out = self._provider(form)
-            except Exception as e:
-                failure = unreadable(e, form["provider"])
+        try:
+            while True:
                 with self._lock:
-                    self._reserved[meter] -= reserve
-                    self._log(call, key, form=form, error=failure.reason)
-                if not isinstance(failure, ProviderUnavailable):
+                    if call.off_peak_only:
+                        peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
+                    held = self._spent[meter] + self._reserved[meter]
+                    if held + reserve > call.ceiling_usd:
+                        raise CeilingReached(
+                            f"meter {call.label!r} has {held:.6f} USD spent or held, and this call "
+                            f"may cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
+                        )
+                    self._reserved[meter] += reserve
+                retries.attempts += 1
+                try:
+                    out = self._provider(form)
+                except Exception as e:
+                    failure = unreadable(e, form["provider"])
+                    with self._lock:
+                        self._reserved[meter] -= reserve
+                        self._log(call, key, form=form, error=failure.reason)
+                    if not isinstance(failure, ProviderUnavailable):
+                        raise
+                    self.clock.sleep_until(retries.again(failure))
+                    continue
+                except BaseException:
+                    with self._lock:
+                        self._reserved[meter] -= reserve
                     raise
-                self.clock.sleep_until(retries.again(failure))
-                continue
-            except BaseException:
+                field = "text" if form["route"] == "chat" else "answers"
+                output_tokens = len(out) if field == "text" else len(json.dumps(out))
+                usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+                cost = (
+                    input_tokens * price.input_usd_per_token
+                    + output_tokens * price.output_usd_per_token
+                )
+                reply = {field: out, "usage": usage, "first_cost_usd": cost}
+                empty = None if out else ProviderUnavailable("the provider sent an empty reply")
                 with self._lock:
                     self._reserved[meter] -= reserve
-                raise
-            field = "text" if form["route"] == "chat" else "answers"
-            output_tokens = len(out) if field == "text" else len(json.dumps(out))
-            usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
-            cost = (
-                input_tokens * price.input_usd_per_token
-                + output_tokens * price.output_usd_per_token
-            )
-            reply = {field: out, "usage": usage, "first_cost_usd": cost}
-            empty = None if out else ProviderUnavailable("the provider sent an empty reply")
-            with self._lock:
-                self._reserved[meter] -= reserve
-                self._spent[meter] += cost
+                    self._spent[meter] += cost
+                    if empty is not None:
+                        self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
+                    else:
+                        self._cache.setdefault(key, reply)
+                        self._log(call, key, form=form, reply=reply, cost_usd=cost)
                 if empty is not None:
-                    self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
-                else:
-                    self._cache.setdefault(key, reply)
-                    self._log(call, key, form=form, reply=reply, cost_usd=cost)
-            if empty is not None:
-                paid += cost
-                self.clock.sleep_until(retries.again(empty))
-                continue
-            return {
-                **reply,
-                "cost_usd": paid + cost,
-                "cached": False,
-                "attempts": retries.attempts,
-            }
+                    paid += cost
+                    self.clock.sleep_until(retries.again(empty))
+                    continue
+                return {
+                    **reply,
+                    "cost_usd": paid + cost,
+                    "cached": False,
+                    "attempts": retries.attempts,
+                }
+        except (Stopped, Rejected, PeakHours) as e:
+            e.cost_usd, e.attempts = paid, retries.attempts
+            raise
 
     def _log(
         self,

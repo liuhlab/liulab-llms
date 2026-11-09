@@ -3,7 +3,8 @@
 The client, the fake gateway and the real gateway all build these from this module, so they
 agree on every key. A call is a JSON `Call` posted to the path for its form's route. A reply
 comes back as status 200 and a JSON object; an error as another status and
-``{"error": <reason>, "message": <text>}``, where the reason names an error class.
+``{"error": <reason>, "message": <text>, "cost_usd": <paid>, "attempts": <sent>}``, where the
+reason names an error class.
 """
 
 import hashlib
@@ -124,8 +125,13 @@ def encode_reply(reply: dict[str, Any]) -> tuple[int, bytes]:
 
 
 def encode_error(error: Stopped | Rejected | PeakHours) -> tuple[int, bytes]:
-    """Encode an error as a status and body. A peak reply adds `until`."""
-    body: dict[str, Any] = {"error": error.reason, "message": str(error)}
+    """Encode an error as a status and body, with what the call paid. A peak reply adds `until`."""
+    body: dict[str, Any] = {
+        "error": error.reason,
+        "message": str(error),
+        "cost_usd": error.cost_usd,
+        "attempts": error.attempts,
+    }
     if isinstance(error, PeakHours):
         body["until"] = error.until
     return STATUS[error.reason], json.dumps(body, ensure_ascii=False).encode()
@@ -137,8 +143,8 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
     Raises
     ------
     Stopped, Rejected, PeakHours
-        The class the response's reason names. A response no client understands raises
-        `GatewayUnreachable`.
+        The class the response's reason names, with the cost and attempts it carries, or none.
+        A response no client understands raises `GatewayUnreachable`.
     """
     try:
         data = json.loads(body)
@@ -147,13 +153,19 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
     if isinstance(data, dict):
         if status == 200 and "error" not in data:
             return data
-        reason = data.get("error")
-        error = _ERRORS.get(reason) if isinstance(reason, str) else None
-        if error is not None:
-            raise error(data.get("message", ""))
+        reason, message = data.get("error"), str(data.get("message", ""))
+        cls = _ERRORS.get(reason) if isinstance(reason, str) else None
         until = data.get("until")
-        if reason == PeakHours.reason and _seconds(until):
-            raise PeakHours(data.get("message", ""), until=float(until))
+        error: Stopped | Rejected | PeakHours | None = None
+        if cls is not None:
+            error = cls(message)
+        elif reason == PeakHours.reason and _seconds(until):
+            error = PeakHours(message, until=float(until))
+        if error is not None:
+            cost, attempts = data.get("cost_usd"), data.get("attempts")
+            error.cost_usd = float(cost) if _seconds(cost) else 0.0
+            error.attempts = attempts if isinstance(attempts, int) and attempts > 0 else 0
+            raise error
     raise GatewayUnreachable(f"the gateway answered {status}: {body[:200]!r}")
 
 

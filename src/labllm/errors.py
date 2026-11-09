@@ -7,10 +7,13 @@ class Stopped(Exception):  # noqa: N818 - the name callers catch
     """A call failed in a way that must stop the caller's loop: the base of the four stops.
 
     `reason` names the stop, the same string on every instance of a class. It is also the
-    error's code on the wire.
+    error's code on the wire. `cost_usd` is what the failed call paid, and `attempts` the
+    requests the gateway sent the provider for it, retries included.
     """
 
     reason: ClassVar[str]
+    cost_usd: float = 0.0
+    attempts: int = 0
 
 
 class CeilingReached(Stopped):
@@ -51,20 +54,25 @@ class GatewayUnreachable(Stopped):
 class Rejected(Exception):  # noqa: N818 - the name callers catch
     """The request is malformed or unauthorized, or names a model with no price.
 
-    A bug in the caller or the gateway's settings, so nothing retries it.
+    A bug in the caller or the gateway's settings, so nothing retries it. `cost_usd` and
+    `attempts` are `Stopped`'s.
     """
 
     reason = "rejected"
+    cost_usd: float = 0.0
+    attempts: int = 0
 
 
 class PeakHours(Exception):  # noqa: N818 - named for what the gateway says
     """An off-peak-only call reached the gateway in its provider's peak hours.
 
     The client waits until `until`, in seconds since the Unix epoch, and sends it again, so
-    callers never see this.
+    callers never see this. `cost_usd` and `attempts` are `Stopped`'s.
     """
 
     reason = "peak_hours"
+    cost_usd: float = 0.0
+    attempts: int = 0
 
     def __init__(self, message: str, *, until: float) -> None:
         super().__init__(message)
