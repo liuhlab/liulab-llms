@@ -34,8 +34,8 @@ its cost and tries again. A reply's `cost_usd` covers every attempt of its call.
 
 ## Consequences
 
-- Replies carry `attempts`; a client reading an older gateway counts one, or none for a hit.
-  A call that fails after retries reaches the engine as one request.
+- Replies and error bodies carry `attempts`, so a call that fails after retries reaches the
+  engine with every request it sent. A reply with no count counts one, or none for a hit.
 - `Clock.wait(condition, until)` joins the clock seam; `FakeClock.until_waiting` lets a test
   see calls waiting.
 - The record gains `attempt` and `waited_s`.

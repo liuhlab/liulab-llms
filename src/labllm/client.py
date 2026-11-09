@@ -63,10 +63,10 @@ class Transport(Protocol):
 
         Raises
         ------
-        ConnectionRefusedError
-            The gateway refused the connection, so nothing was sent.
+        ConnectionError
+            The gateway refused the connection, or it dropped with no reply.
         OSError, http.client.HTTPException
-            The connection failed in any other way, perhaps after the request was sent.
+            The connection failed in any other way.
         """
         ...
 
@@ -96,9 +96,11 @@ class Gateway:
     """The client of the lab gateway. One per process; safe from many threads.
 
     The gateway's address comes from `$LABLLM_GATEWAY`, a local address the caller's SSH
-    tunnel serves. A refused connection is retried for `connect_retry_s` seconds, so a gateway
-    restart does not stop the caller, and then raises `GatewayUnreachable`. A connection that
-    fails once the request may have been sent raises it at once, so no call is sent twice.
+    tunnel serves. A refused connection, or one dropped with no reply, as a tunnel drops it
+    while the gateway restarts, is sent again for `connect_retry_s` seconds, then raises
+    `GatewayUnreachable`. A resend never pays twice: the gateway serves one whose call it
+    already answered from the cache, and makes one whose call is in flight wait for it. Its
+    counters then show no cost for that call; the gateway's record and ceiling hold it.
 
     Parameters
     ----------
@@ -185,7 +187,7 @@ class Gateway:
             sent = self._clock.now()
             try:
                 status, out = self._transport.send(path, body)
-            except ConnectionRefusedError as e:
+            except ConnectionError as e:
                 left = deadline - self._clock.now()
                 if left <= 0:
                     raise GatewayUnreachable(f"the gateway does not answer: {e}") from e
@@ -193,7 +195,6 @@ class Gateway:
                 delay = min(delay * 2, 8.0)
                 continue
             except (OSError, http.client.HTTPException) as e:
-                # The request may have been sent: sending it again could pay for it twice.
                 raise GatewayUnreachable(f"the connection to the gateway failed: {e!r}") from e
             try:
                 return wire.decode_response(status, out)

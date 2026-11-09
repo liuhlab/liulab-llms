@@ -110,9 +110,10 @@ class GatewayHarness:
         self._record = record
 
     def client(self, *, repo: str = "tests", person: str | None = None) -> Gateway:
-        return Gateway(
-            repo=repo, person=person, transport=HttpTransport(self._address), clock=self.clock
-        )
+        return Gateway(repo=repo, person=person, transport=self.transport(), clock=self.clock)
+
+    def transport(self) -> HttpTransport:
+        return HttpTransport(self._address)
 
     def provider(self, fn: Any) -> None:
         self.fn = fn

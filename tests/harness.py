@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from labllm import Gateway, Model
+from labllm.client import Transport
 from labllm.testing import Exchange, FakeClock, FakeGateway, OffPeak, Price, Provider
 
 #: A Monday at 00:00 UTC, and an hour, for tests that set the clock against peak hours.
@@ -50,6 +51,10 @@ class Harness(Protocol):
         """A client of this gateway, on a clock the harness controls."""
         ...
 
+    def transport(self) -> Transport:
+        """What a client of this gateway sends through, for a test to wrap."""
+        ...
+
     def provider(self, fn: Provider) -> None:
         """Set the function that plays the provider for every later call."""
         ...
@@ -73,6 +78,9 @@ class FakeHarness:
 
     def client(self, *, repo: str = "tests", person: str | None = None) -> Gateway:
         return self.fake.client(repo=repo, person=person)
+
+    def transport(self) -> Transport:
+        return self.fake
 
     def provider(self, fn: Provider) -> None:
         self._provider = fn

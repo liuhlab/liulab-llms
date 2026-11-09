@@ -1,6 +1,7 @@
 """The shared call-layer suite: every test here runs against every gateway in `HARNESSES`."""
 
 import dataclasses
+import http.client
 import itertools
 import json
 import threading
@@ -12,6 +13,7 @@ import pytest
 from harness import CHAT, HOUR, JEV, MONDAY, PEAK, Harness
 from labllm import (
     CeilingReached,
+    Gateway,
     GatewayUnreachable,
     Model,
     ProviderExhausted,
@@ -194,6 +196,60 @@ def test_a_call_identical_to_one_that_failed_in_flight_tries_itself(harness: Har
             first.result(timeout=10)
         assert second.result(timeout=10).cached is False
     assert [e.error for e in harness.record()] == ["provider_exhausted", None]
+
+
+class Dropping:
+    """Wraps a gateway's transport, dropping connections as a broken tunnel would.
+
+    Each send while `now()` is before `down_until` drops before reaching the gateway. The
+    first `lose_replies` sends reach the gateway, which answers, and then drop.
+    """
+
+    def __init__(self, harness: Harness, *, down_until: float = 0.0, lose_replies: int = 0):
+        self._inner, self._clock = harness.transport(), harness.clock
+        self.down_until, self.lose_replies = down_until, lose_replies
+
+    def send(self, path: str, body: bytes) -> tuple[int, bytes]:
+        if self._clock.now() < self.down_until:
+            raise http.client.RemoteDisconnected("the tunnel closed the connection")
+        answer = self._inner.send(path, body)
+        if self.lose_replies > 0:
+            self.lose_replies -= 1
+            raise ConnectionResetError("the connection dropped before the reply")
+        return answer
+
+
+def test_a_reply_lost_with_its_connection_is_sent_again_and_never_paid_twice(
+    harness: Harness,
+) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    gw = Gateway(repo="tests", transport=Dropping(harness, lose_replies=1), clock=harness.clock)
+    with gw.meter("lost reply", ceiling_usd=1.0) as m:
+        r = m.chat(CHAT, user="hello")
+    # The resend is a cache hit, so the client counts nothing paid for this call.
+    assert (r.text, r.cached, provider.calls) == ("abc", True, 1)
+    assert [e.cached for e in harness.record()] == [False, True]
+
+
+def test_a_gateway_down_for_a_while_does_not_stop_the_caller(harness: Harness) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    down = Dropping(harness, down_until=harness.clock.now() + 20.0)
+    gw = Gateway(repo="tests", transport=down, clock=harness.clock)
+    with gw.meter("restart", ceiling_usd=1.0) as m:
+        r = m.chat(CHAT, user="hello")
+    assert (r.text, r.cached, provider.calls) == ("abc", False, 1)
+    assert harness.clock.now() >= down.down_until
+
+
+def test_a_gateway_down_past_the_retry_window_stops_the_caller(harness: Harness) -> None:
+    harness.provider(Counting())
+    down = Dropping(harness, down_until=harness.clock.now() + 2 * Gateway.connect_retry_s)
+    gw = Gateway(repo="tests", transport=down, clock=harness.clock)
+    with gw.meter("down", ceiling_usd=1.0) as m, pytest.raises(GatewayUnreachable):
+        m.chat(CHAT, user="hello")
+    assert harness.record() == []
 
 
 def test_a_cache_hit_never_counts_against_a_ceiling(harness: Harness) -> None:

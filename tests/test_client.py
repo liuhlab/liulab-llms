@@ -59,27 +59,6 @@ def test_a_gateway_that_stays_down_stops_the_caller(fake: FakeGateway) -> None:
     assert fake.record == []
 
 
-class Dropping:
-    """Passes each request to `fake`, then drops the connection before its answer arrives."""
-
-    def __init__(self, fake: FakeGateway) -> None:
-        self.fake = fake
-        self.sent = 0
-
-    def send(self, path: str, body: bytes) -> tuple[int, bytes]:
-        self.sent += 1
-        self.fake.send(path, body)
-        raise ConnectionResetError("the gateway dropped the connection")
-
-
-def test_a_connection_dropped_after_sending_is_never_sent_again(fake: FakeGateway) -> None:
-    dropping = Dropping(fake)
-    gw = Gateway(repo="tests", transport=dropping, clock=fake.clock)
-    with gw.meter("dropped", ceiling_usd=1.0) as m, pytest.raises(GatewayUnreachable):
-        m.chat(CHAT, user="hello")
-    assert (dropping.sent, len(fake.record)) == (1, 1)
-
-
 class HeldClock(FakeClock):
     """A fake clock whose `sleep_until` blocks until the test lets time pass."""
 
