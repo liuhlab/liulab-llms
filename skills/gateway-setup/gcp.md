@@ -47,6 +47,8 @@ gcloud compute instances list --filter='name~^llm-gateway-' --format='value(name
    ```
 
 6. **Launch:** `sky launch -c llm-gateway llm-gateway.yaml -y --env BACKUP_BUCKET=gs://<bucket>`.
+   The setup runs as job 1; it ends `Job finished (status: SUCCEEDED)`, else read
+   `sky logs llm-gateway 1`. With no keys yet, the gateway waits stopped.
 7. **Fix the address**, promoting the VM's current one:
 
    ```bash
@@ -54,22 +56,30 @@ gcloud compute instances list --filter='name~^llm-gateway-' --format='value(name
      --addresses="$(gcloud compute instances describe <instance> --zone=<zone> --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
    ```
 
-8. **Only SSH open.** List the rules on the VM's network; disable any that opens another
-   port to the internet, such as the default network's `default-allow-rdp`:
+8. **Only SSH open.** The default network opens more than SSH, such as RDP. Leave the
+   project's rules alone. Tag the VM, and add one rule that denies the tag everything but
+   SSH (`<network>` is the VM's, `default` unless set):
 
    ```bash
-   gcloud compute firewall-rules list --format='table(name,sourceRanges.list(),allowed[].map().firewall_rule().list(),disabled)'
-   gcloud compute firewall-rules update default-allow-rdp --disabled
+   gcloud compute instances add-tags <instance> --zone=<zone> --tags=llm-gateway
+   gcloud compute firewall-rules create llm-gateway-only-ssh --network=<network> \
+     --direction=INGRESS --action=DENY --rules=tcp:0-21,tcp:23-65535,udp,icmp \
+     --source-ranges=0.0.0.0/0 --target-tags=llm-gateway --priority=1000
    ```
+
+   SkyPilot has no field for a network tag, so a new VM needs `add-tags` again.
 
 9. **Cut the access scopes** to Cloud Storage read and write, which the nightly dump needs:
    see "Cut the scopes".
 10. **Provider keys**, then "Check it works", both in [SKILL.md](SKILL.md).
+11. **Memory.** After the check's real call, run `ssh llm-gateway free -m`. If under a quarter
+    of the memory is available, or swap is in use at rest, set `instance_type: e2-medium` and
+    rebuild.
 
 ## Cut the scopes
 
-SkyPilot sets the `cloud-platform` scope only when it creates a VM, so a new VM needs the cut
-again.
+SkyPilot sets the `cloud-platform` scope only when it creates a VM. A rerun of `sky launch`
+keeps the cut; a new VM needs it again.
 
 ```bash
 sky stop llm-gateway -y
@@ -82,8 +92,8 @@ sky start llm-gateway -y
 ## Rebuild
 
 After `sky down`, or to change the machine type: launch (step 6), swap the fixed address
-onto the new VM, cut the scopes, send the provider keys, check. The data disk reattaches by
-name.
+onto the new VM, tag it (step 8's `add-tags`), cut the scopes, send the provider keys, check.
+The data disk reattaches by name.
 
 ```bash
 gcloud compute instances delete-access-config <instance> --zone=<zone> --access-config-name="External NAT"
@@ -99,8 +109,15 @@ gcloud compute snapshots create llm-gateway-before-<tag> --source-disk=llm-gatew
 
 ## Restore from a snapshot
 
-Use the dump ([SKILL.md](SKILL.md)) first; a snapshot is the whole disk. Snapshot the disk
-as it is, then swap in a disk made from the chosen snapshot under the same name:
+Use the dump ([SKILL.md](SKILL.md)) first; a snapshot is the whole disk. To look inside one
+without touching the data disk, make a disk from it, attach it with
+`--device-name=restore-test`, and mount `/dev/disk/by-id/google-restore-test`. Delete the
+copy's `pgdata/postmaster.pid`, which names the live server's process. Start a second server
+on it with the environment's `pg_ctl`, with `-o "-c listen_addresses= -c port=5433 -c
+unix_socket_directories=<dir>"`. Afterwards stop it, then detach and delete the copy.
+
+To restore, snapshot the disk as it is, then swap in a disk made from the chosen snapshot
+under the same name:
 
 ```bash
 gcloud compute snapshots list --filter='sourceDisk~llm-gateway-data'

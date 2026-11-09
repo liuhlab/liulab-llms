@@ -41,7 +41,7 @@ the current deployment, is [gcp.md](gcp.md).
 | `labllm-postgres`, `labllm-gateway` | the two services, enabled at boot |
 | `labllm-dump.timer` | the nightly `pg_dump` to the backup bucket |
 | `sudo labllm-db <tool>` | runs `psql`, `pg_dump` or `pg_restore` against the gateway's database |
-| account `tunnel` | lab members' keys: a forward to port 8000, no shell |
+| account `tunnel` | lab members' public keys, in `/mnt/data/tunnel/authorized_keys` so a rebuild keeps them: a forward to port 8000, no shell |
 
 `deploy/gateway/install.sh` installs all of it, as root, and is safe to rerun. Rerunning it is
 the upgrade, and it restarts both services. Logs are in the journal:
@@ -62,7 +62,7 @@ The member sends their public key line. Add it with the tunnel-only options:
 
 ```bash
 echo 'restrict,port-forwarding,permitopen="127.0.0.1:8000" <public key line>' |
-  ssh llm-gateway 'sudo tee -a /home/tunnel/.ssh/authorized_keys >/dev/null'
+  ssh llm-gateway 'sudo tee -a /mnt/data/tunnel/authorized_keys >/dev/null'
 ```
 
 The member then opens a tunnel and points the library at it:
@@ -79,13 +79,16 @@ Check both halves with the key: the tunnel answers, and `ssh tunnel@<gateway-ip>
 
 1. `ssh llm-gateway 'systemctl is-active labllm-postgres labllm-gateway labllm-dump.timer'`
    prints `active` three times.
-2. Through a tunnel, send one tiny chat call twice:
+2. Open a tunnel (`ssh -N -L 8000:127.0.0.1:8000 llm-gateway`) and, beside it, send one tiny
+   chat call twice. Thinking off keeps the reply from coming back empty, which is retried
+   and paid again:
 
    ```bash
-   pixi run python -c 'from labllm import Gateway, Model
+   LABLLM_GATEWAY=http://127.0.0.1:8000 pixi run python -c 'from labllm import Gateway, Model
    m = Gateway(repo="liulab-llms").meter("deploy check", ceiling_usd=0.01)
+   model = Model("deepseek", "deepseek-v4-flash", thinking=False, max_output_tokens=16)
    for _ in range(2):
-       r = m.chat(Model("deepseek", "deepseek-v4-flash", max_output_tokens=8), user="Say OK.")
+       r = m.chat(model, user="Reply with the single word OK.")
        print(r.cached, r.cost_usd)'
    ```
 
@@ -93,23 +96,28 @@ Check both halves with the key: the tunnel answers, and `ssh tunnel@<gateway-ip>
 
 ## Restore from the nightly dump
 
-Live once anyone is served. The dump is the sure copy:
+Live once anyone is served. The dump is the sure copy. Restore it into a new database, compare
+it with `sudo labllm-db psql -d labllm_restored`, then swap the names:
 
 ```bash
 gcloud storage ls gs://<bucket>/
+ssh llm-gateway 'sudo labllm-db createdb labllm_restored &&
+  gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm_restored'
 ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
-  sudo labllm-db dropdb labllm && sudo labllm-db createdb labllm &&
-  gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm &&
+  sudo labllm-db psql -d postgres -c "ALTER DATABASE labllm RENAME TO labllm_before_restore" \
+    -c "ALTER DATABASE labllm_restored RENAME TO labllm" &&
   sudo systemctl start labllm-gateway'
 ```
 
-Then run "Check it works": a call answered before the dump comes back as a hit.
+Then run "Check it works": a call answered before the dump comes back as a hit. Drop
+`labllm_before_restore` once the admin agrees.
 
 ## Upgrade
 
 1. Snapshot the data disk ([gcp.md](gcp.md)).
 2. Move `GATEWAY_TAG` in the task file to the new release tag.
-3. Rerun the launch. Calls in flight ride through the restart: the library resends them.
+3. Rerun the launch. It restarts both services; a call sent meanwhile waits and completes,
+   since the library resends it for a minute.
 4. Run "Check it works".
 
 If the new lock moves PostgreSQL to a new major version, the server refuses the old data:

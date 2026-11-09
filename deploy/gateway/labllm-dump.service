@@ -6,5 +6,5 @@ After=labllm-postgres.service network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/labllm/backup.env
-Environment=PATH=/usr/local/bin:/snap/bin:/usr/bin:/bin
+Environment=PATH=/usr/local/bin:/snap/bin:/usr/sbin:/usr/bin:/bin
 ExecStart=/usr/local/bin/labllm-dump

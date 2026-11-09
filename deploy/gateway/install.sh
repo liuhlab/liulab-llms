@@ -34,16 +34,6 @@ echo "== accounts"
 # labllm runs the gateway and its database; tunnel holds lab members' keys, tunnel only.
 id labllm &>/dev/null || useradd --system --create-home --home-dir "$APP" --shell /usr/sbin/nologin labllm
 id tunnel &>/dev/null || useradd --create-home --shell /usr/sbin/nologin tunnel
-install -d -m 700 -o tunnel -g tunnel /home/tunnel/.ssh
-[[ -f /home/tunnel/.ssh/authorized_keys ]] ||
-    install -m 600 -o tunnel -g tunnel /dev/null /home/tunnel/.ssh/authorized_keys
-install -m 644 "$here/sshd-tunnel.conf" /etc/ssh/sshd_config.d/40-labllm-tunnel.conf
-if ! sshd -t; then
-    rm -f /etc/ssh/sshd_config.d/40-labllm-tunnel.conf
-    echo "sshd rejected the tunnel settings; they were removed" >&2
-    exit 1
-fi
-systemctl reload ssh
 
 echo "== code at $GATEWAY_TAG"
 if [[ "$(as_app pixi --version 2>/dev/null)" != "pixi ${PIXI_VERSION#v}" ]]; then
@@ -69,6 +59,19 @@ if [[ ! -f $DATA/pgdata/PG_VERSION ]]; then
         --auth-host=scram-sha-256 --encoding=UTF8 --no-locale
 fi
 
+echo "== tunnel keys on $DATA"
+install -d -m 755 -o root -g root "$DATA/tunnel"
+[[ -f $DATA/tunnel/authorized_keys ]] ||
+    install -m 600 -o tunnel -g tunnel /dev/null "$DATA/tunnel/authorized_keys"
+chown tunnel:tunnel "$DATA/tunnel/authorized_keys"
+install -m 644 "$here/sshd-tunnel.conf" /etc/ssh/sshd_config.d/40-labllm-tunnel.conf
+if ! sshd -t; then
+    rm -f /etc/ssh/sshd_config.d/40-labllm-tunnel.conf
+    echo "sshd rejected the tunnel settings; they were removed" >&2
+    exit 1
+fi
+systemctl reload ssh
+
 echo "== services"
 install -d -m 755 /etc/labllm
 install -m 644 "$here/settings.toml" /etc/labllm/settings.toml
@@ -77,7 +80,7 @@ install -m 644 "$here"/labllm-*.service "$here"/labllm-*.timer /etc/systemd/syst
 systemctl daemon-reload
 systemctl enable --quiet labllm-postgres labllm-gateway
 systemctl restart labllm-postgres
-"$ENVBIN/pg_isready" -q -h /run/labllm-postgres -t 60
+timeout 60 bash -c "until '$ENVBIN/pg_isready' -q -h /run/labllm-postgres; do sleep 1; done"
 if [[ "$(labllm-db psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'labllm'")" != 1 ]]; then
     labllm-db createdb labllm
 fi
