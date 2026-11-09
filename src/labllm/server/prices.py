@@ -85,11 +85,12 @@ class Prices:
                 )
             except Exception:
                 log.exception("LiteLLM could not price a %s response; using its list price", name)
+        return self.tokens_cost(form, usage.prompt_tokens, usage.completion_tokens)
+
+    def tokens_cost(self, form: dict[str, Any], input_tokens: int, output_tokens: int) -> float:
+        """Return what the form's model charges for these token counts, at its dearest hour."""
         price = self.price(form)
-        return (
-            usage.prompt_tokens * price.input_usd_per_token
-            + usage.completion_tokens * price.output_usd_per_token
-        )
+        return input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
 
 
 def _input_bytes(form: dict[str, Any]) -> int:

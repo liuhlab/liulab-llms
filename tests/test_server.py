@@ -1,5 +1,7 @@
 """The gateway server through its HTTP route, beyond what the shared call-layer suite covers."""
 
+import dataclasses
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +9,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
+import httpx2
 import psycopg
 import pytest
 
@@ -16,6 +19,7 @@ from labllm import (
     CeilingReached,
     ChatReply,
     Gateway,
+    JevReply,
     Model,
     ProviderUnavailable,
     Rejected,
@@ -23,6 +27,7 @@ from labllm import (
 from labllm.client import HttpTransport
 from labllm.server import Prices, Provider, Record, Server
 from labllm.server.chat import LiteLLMChat
+from labllm.server.jev import TypeSafeJev
 from labllm.server.prices import litellm
 from labllm.testing import FakeClock, Price
 
@@ -192,6 +197,144 @@ def test_an_empty_reply_is_not_cached(conninfo: str) -> None:
     with pytest.raises(ProviderUnavailable):
         send(conninfo, chat, Model("openai", "gpt-5.5"))
     assert [e.error for e in read_record(conninfo)] == ["provider_unavailable"]
+
+
+#: Jev's questions, by name, as its API takes them.
+QUESTIONS = {
+    "assay": {
+        "type": "choice",
+        "instructions": "Which assay is it?",
+        "criteria": {"single-cell": None, "bulk": None},
+    },
+    "depth": {"type": "score", "instructions": "How deep?", "criteria": ["low", "mid", "high"]},
+    "human": {"type": "noul", "instructions": "Is it human?"},
+}
+#: Jev's reply, byte for byte: "human" unanswered, "depth" lacking level 1, a probability with
+#: more digits than a float holds, and an answer type newer than the SDK.
+JEV_BODY = (
+    b'{"model": "jev-1.14.0", "answers": {'
+    b'"assay": {"type": "choice", "choice": "bulk", "confidence": 0.62,'
+    b' "probabilities": {"single-cell": 0.12345678901234567891, "bulk": 0.8765432109876543}},'
+    b' "depth": {"type": "score", "score": 1.5, "confidence": 0.5,'
+    b' "legend": {"0": "low", "1": "mid", "2": "high"}, "probabilities": {"0": 0.25, "2": 0.75}},'
+    b' "later": {"type": "rank", "order": ["b", "a"]}},'
+    b' "usage": {"input_tokens": 120, "output_tokens": 12}}'
+)
+JEV_MODEL = Model("typesafe", "jev-1.14.0")
+
+
+class JevApi:
+    """Plays Jev's HTTP API under TypeSafe's SDK: keeps each request, answers each the same."""
+
+    def __init__(
+        self, status: int = 200, body: bytes = JEV_BODY, error: Exception | None = None
+    ) -> None:
+        self.status, self.body, self.error = status, body, error
+        self.requests: list[httpx2.Request] = []
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        # Retry-After 0: were the SDK's own retries on, they would come at once and be counted.
+        headers = {"content-type": "application/json", "retry-after": "0"}
+        return httpx2.Response(self.status, content=self.body, headers=headers)
+
+    def jev(self) -> TypeSafeJev:
+        """The real Jev provider, with this playing Jev."""
+        return TypeSafeJev(Prices(), api_key="test-key", transport=httpx2.MockTransport(self))
+
+
+def ask(conninfo: str, provider: Provider, model: Model = JEV_MODEL) -> JevReply:
+    """Send one Jev call through a fresh gateway whose Jev provider is `provider`."""
+    with (
+        gateway(conninfo, {"jev": provider}, prices={}) as gw,
+        gw.meter("one", ceiling_usd=1.0) as m,
+    ):
+        return m.jev(model, description="GSE1: bulk RNA-seq", questions=QUESTIONS)
+
+
+def test_jevs_answers_pass_through_untouched_to_the_record_and_back(conninfo: str) -> None:
+    api = JevApi()
+    sent = json.loads(JEV_BODY)
+    with (
+        gateway(conninfo, {"jev": api.jev()}, prices={}) as gw,
+        gw.meter("pass", ceiling_usd=1.0) as m,
+    ):
+        first = m.jev(JEV_MODEL, description="GSE1: bulk RNA-seq", questions=QUESTIONS)
+        again = m.jev(JEV_MODEL, description="GSE1: bulk RNA-seq", questions=QUESTIONS)
+    for r in (first, again):
+        assert json.dumps(r.answers) == json.dumps(sent["answers"])  # key order included
+        assert "human" not in r.answers
+        assert r.answers["depth"]["probabilities"] == {"0": 0.25, "2": 0.75}
+        assert r.answers["assay"]["probabilities"]["single-cell"] == 0.12345678901234567891
+        assert r.answers["later"] == {"type": "rank", "order": ["b", "a"]}
+    assert (first.cached, again.cached) == (False, True)
+    assert first.usage == {"input_tokens": 120, "output_tokens": 12}
+    assert first.cost_usd == pytest.approx(120 * 0.042e-6)  # the pinned table's Jev input price
+    (request,) = api.requests
+    assert json.loads(request.content) == {
+        "state": "GSE1: bulk RNA-seq",
+        "model": "jev-1.14.0",
+        "questions": QUESTIONS,
+    }
+    with psycopg.connect(conninfo) as conn:
+        row = conn.execute("SELECT reply, response FROM exchanges WHERE NOT cached").fetchone()
+    assert row is not None
+    assert json.dumps(row[0]) == json.dumps({"answers": sent["answers"]})
+    assert row[1] == sent
+
+
+@pytest.mark.parametrize(
+    "api",
+    [
+        JevApi(529, b'{"error": "overloaded"}'),
+        JevApi(429, b'{"error": "rate limited"}'),
+        JevApi(503, b""),
+        JevApi(error=httpx2.ConnectError("refused")),
+        JevApi(
+            body=b'{"model": "jev-1.14.0", "answers": {},'
+            b' "usage": {"input_tokens": 9, "output_tokens": 0}}'
+        ),
+    ],
+    ids=["overloaded", "rate-limited", "unavailable", "unreachable", "no-answers"],
+)
+def test_a_jev_failure_is_unavailable_after_one_attempt(conninfo: str, api: JevApi) -> None:
+    with pytest.raises(ProviderUnavailable):
+        ask(conninfo, api.jev())
+    assert len(api.requests) == 1
+    assert [e.error for e in read_record(conninfo)] == ["provider_unavailable"]
+
+
+@pytest.mark.parametrize("status", [400, 401, 422])
+def test_a_jev_request_refused_as_malformed_or_unauthorized_is_rejected_unretried(
+    conninfo: str, status: int
+) -> None:
+    api = JevApi(status, b'{"detail": "no"}')
+    with pytest.raises(Rejected):
+        ask(conninfo, api.jev())
+    assert len(api.requests) == 1
+    assert [e.error for e in read_record(conninfo)] == ["rejected"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    [dataclasses.replace(JEV_MODEL, temperature=0.0), Model("openai", "jev-1.14.0")],
+    ids=["a-setting-jev-does-not-take", "not-a-typesafe-model"],
+)
+def test_a_jev_call_jev_cannot_take_is_rejected_unsent(conninfo: str, model: Model) -> None:
+    api = JevApi()
+    with pytest.raises(Rejected):
+        ask(conninfo, api.jev(), model)
+    assert api.requests == []
+
+
+def test_a_gateway_with_no_jev_key_rejects_jev_calls(
+    conninfo: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    with pytest.raises(Rejected, match="API key"):
+        ask(conninfo, TypeSafeJev(Prices()))
 
 
 def test_the_server_imports_litellm_only_to_use_it_and_never_downloads_prices() -> None:

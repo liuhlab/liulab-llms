@@ -1,6 +1,7 @@
 """The shared call-layer suite: every test here runs against every gateway in `HARNESSES`."""
 
 import dataclasses
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -19,6 +20,14 @@ from labllm import (
 )
 
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+#: Jev's questions, by name, as its API takes them.
+QUESTIONS = {
+    "rnaseq": {"type": "noul", "instructions": "Is it RNA-seq?"},
+    "depth": {"type": "score", "instructions": "How deep?", "criteria": ["low", "mid", "high"]},
+    "human": {"type": "noul", "instructions": "Is it human?"},
+}
+#: A small answer as Jev sends one: 36 characters of JSON.
+NOUL = {"a": {"type": "noul", "noul": 0.5}}
 
 
 class Counting:
@@ -190,20 +199,85 @@ def test_one_except_catches_every_stop() -> None:
 
 
 def test_jev_answers_come_back_exactly_as_jev_returned_them(harness: Harness) -> None:
-    answers = [
-        {"id": "q1", "answer": "yes", "probability": 0.123456789012345},
-        {"id": "q2", "answer": None},
-    ]
+    # "human" unanswered, "depth" lacking level 1, a probability with a float's every digit.
+    answers = {
+        "rnaseq": {"type": "noul", "noul": 0.1234567890123456},
+        "depth": {
+            "type": "score",
+            "score": 1.5,
+            "confidence": 0.5,
+            "legend": {"0": "low", "1": "mid", "2": "high"},
+            "probabilities": {"0": 0.25, "2": 0.75},
+        },
+    }
     seen: list[dict[str, Any]] = []
     harness.provider(lambda form: seen.append(form) or answers)
-    questions = [{"id": "q1", "noul": "Is it RNA-seq?"}, "Is it human?"]
-    with harness.client().meter("jev", ceiling_usd=1.0) as m:
-        first = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=questions, tag="GSE1")
-        again = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=questions, tag="GSE1")
-    assert first.answers == answers
-    assert (first.cached, again.cached, again.answers) == (False, True, answers)
-    assert first.cost_usd > 0
-    assert (seen[0]["description"], seen[0]["questions"]) == ("GSE1: bulk RNA-seq", questions)
+    with harness.client().meter("jev", ceiling_usd=10.0) as m:
+        first = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=QUESTIONS, tag="GSE1")
+        again = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=QUESTIONS, tag="GSE1")
+    for r in (first, again):
+        assert json.dumps(r.answers) == json.dumps(answers)  # key order included
+    assert (first.cached, again.cached) == (False, True)
+    assert first.cost_usd == pytest.approx(len(json.dumps(answers)) * 0.01)
+    assert (seen[0]["description"], seen[0]["questions"]) == ("GSE1: bulk RNA-seq", QUESTIONS)
+    paid, hit = harness.record()
+    assert paid.reply is not None
+    assert json.dumps(paid.reply["answers"]) == json.dumps(answers)
+    assert (paid.tag, hit.cached) == ("GSE1", True)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"description": "GSE2: bulk RNA-seq"},
+        {"questions": QUESTIONS | {"human": {"type": "noul", "instructions": "Is it a mouse?"}}},
+        {"questions": QUESTIONS | {"mouse": {"type": "noul", "instructions": "Is it a mouse?"}}},
+        {"model": dataclasses.replace(JEV, max_output_tokens=9)},
+    ],
+    ids=["description", "question", "added-question", "output-limit"],
+)
+def test_any_change_to_a_jev_request_misses_the_cache(
+    harness: Harness, change: dict[str, Any]
+) -> None:
+    calls: list[str] = []
+    harness.provider(lambda form: calls.append("sent") or NOUL)
+    base: dict[str, Any] = {"model": JEV, "description": "GSE1", "questions": QUESTIONS}
+    with harness.client().meter("miss", ceiling_usd=10.0) as m:
+        m.jev(**base)
+        r = m.jev(**(base | change))
+    assert (len(calls), r.cached) == (2, False)
+
+
+def test_jev_and_chat_calls_share_a_meters_ceiling_and_the_record(harness: Harness) -> None:
+    harness.provider(lambda form: NOUL if form["route"] == "jev" else "abc")
+    with harness.client().meter("both", ceiling_usd=0.40) as m:
+        m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")  # 36 characters: 0.36
+        with pytest.raises(CeilingReached):
+            m.chat(CHAT, user="hello")  # 0.36 spent and 0.10 held would cross 0.40
+        r = m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")
+    assert (r.cached, m.spent_usd, m.requests, m.cache_hits) == pytest.approx((True, 0.36, 2, 1))
+    assert [(e.cached, e.tag) for e in harness.record()] == [(False, "GSE1"), (True, "GSE1")]
+
+
+@pytest.mark.parametrize("error", [ProviderUnavailable, Rejected])
+def test_a_jev_error_reaches_the_caller_and_is_not_cached(
+    harness: Harness, error: type[Stopped | Rejected]
+) -> None:
+    calls: list[str] = []
+
+    def failing(form: dict[str, Any]) -> Any:
+        calls.append(form["description"])
+        if len(calls) == 1:
+            raise error("Jev said no")
+        return NOUL
+
+    harness.provider(failing)
+    with harness.client().meter("errors", ceiling_usd=1.0) as m:
+        with pytest.raises(error, match="Jev said no"):
+            m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")
+        r = m.jev(JEV, description="GSE1", questions=QUESTIONS)
+    assert (r.cached, len(calls)) == (False, 2)
+    assert harness.record()[0].error == error.reason
 
 
 def test_calls_from_many_threads_are_each_answered_and_counted(harness: Harness) -> None:

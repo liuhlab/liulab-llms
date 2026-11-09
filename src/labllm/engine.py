@@ -131,7 +131,7 @@ class Unit:
         model = self._model(role, "chat")
         return self._meter.chat(model, user=user, system=system, schema=schema, tag=self.key)
 
-    def jev(self, role: str, *, description: str, questions: Sequence[Any]) -> JevReply:
+    def jev(self, role: str, *, description: str, questions: Mapping[str, Any]) -> JevReply:
         """Ask the model filling `role` Jev's closed questions, as `Meter.jev` does."""
         model = self._model(role, "jev")
         return self._meter.jev(model, description=description, questions=questions, tag=self.key)

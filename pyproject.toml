@@ -29,6 +29,8 @@ gateway = [
     # libpq comes from conda-forge in pixi; outside pixi, add psycopg's `binary` extra.
     "psycopg>=3.2",
     "psycopg-pool>=3.2",
+    # Jev's own client. Not on conda-forge; pure Python with PyPI provenance, so a range.
+    "typesafe-sdk>=0.7.5,<0.8",
 ]
 
 # ============================== build ==============================

@@ -8,7 +8,7 @@ comes back as status 200 and a JSON object; an error as another status and
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -57,12 +57,12 @@ def chat_form(
     return {**_model_part("chat", model), "messages": messages, "schema": schema}
 
 
-def jev_form(model: Model, *, description: str, questions: Sequence[Any]) -> dict[str, Any]:
-    """Build the request form of a Jev call."""
+def jev_form(model: Model, *, description: str, questions: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the request form of a Jev call: its questions keep their names and order."""
     return {
         **_model_part("jev", model),
         "description": description,
-        "questions": list(questions),
+        "questions": dict(questions),
     }
 
 
