@@ -166,11 +166,11 @@ if __name__ == "__main__":
     ])  # fmt: skip
 
     show("a review that fails an answer check, saved with a reason", task.save_review(
-        BOUNDING, "GSE500", who="hanqing", answer={"members": ["GSE500", "GSE501", "GSE999"]},
+        BOUNDING, "GSE500", who="a.reviewer", answer={"members": ["GSE500", "GSE501", "GSE999"]},
         note="GSE999 is the same lab's reanalysis, linked only in the paper",
         overrides={"members_in_group": "the link is in the paper, not in GEO"},
     ))  # fmt: skip
-    task.save_review(BOUNDING, "GSE400", who="hanqing", drop=True, note="not a study")
+    task.save_review(BOUNDING, "GSE400", who="a.reviewer", drop=True, note="not a study")
     show("review queue after two reviews", [e.key for e in task.review_queue(BOUNDING)])
 
     show("a narrower pass: only held units", "")

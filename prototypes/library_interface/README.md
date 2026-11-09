@@ -17,3 +17,11 @@ pixi run python harvest_call.py   # one harvest call through a meter, then a cei
 | `harvest_call.py` | The call layer with no unit or pass |
 
 Everything lives in memory and the provider is played by `FakeGateway`.
+
+## Verdict (2026-11-08)
+
+- A kind is **one plain function**, as in `bounding_as_function.py`, not the declared list in
+  `bounding.py`. The one send-back is the kind's own code.
+- Tests use the fake gateway, shipped as `labllm.testing`. The library never calls a provider
+  directly.
+- The rest of the sketch stands. The full answer is on the issue this prototype resolved.
