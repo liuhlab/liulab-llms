@@ -40,7 +40,8 @@ unfinished row at its reservation, so a crash mid-call keeps the ceiling.
 - The ceiling's input estimate is the UTF-8 bytes of everything sent as input, as JSON: the
   messages with their roles, and the schema. That bounds a byte-level tokenizer's count, but
   is too high for a rate limit on input tokens.
-- LiteLLM's usage object is recorded as the provider's usage. For DeepSeek it carries
-  DeepSeek's own fields; for Claude LiteLLM rewrites the input count and keeps no raw copy.
+- The record keeps the provider's own response body and usage, taken from the per-call
+  `logger_fn` hook, which sees the body before LiteLLM rewrites Claude's usage. LiteLLM's
+  response and usage stand in only when that body is not JSON with a usage object.
 - An empty reply is an error, never a cache entry.
 - A later column is one more `ADD COLUMN IF NOT EXISTS` at the end of `record.SCHEMA`.

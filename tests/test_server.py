@@ -652,6 +652,38 @@ def test_overload_is_tried_again_after_the_wait_the_provider_asks_for(
     assert api.sent_at[1] - api.sent_at[0] == wait
 
 
+@pytest.mark.usefixtures("provider_keys")
+def test_claudes_raw_usage_and_response_are_recorded_and_returned(conninfo: str) -> None:
+    # LiteLLM folds the cache reads into its own input count; the record keeps Claude's.
+    usage = {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 90,
+        "output_tokens": 3,
+    }
+    body = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-4-1",
+        "content": [{"type": "text", "text": "abc"}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": usage,
+    }
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)))
+    completion = functools.partial(litellm().completion, client=HTTPHandler(client=http))
+    with (
+        gateway(conninfo, {"chat": LiteLLMChat(Prices(), completion=completion)}, {}) as gw,
+        gw.meter("claude", ceiling_usd=1.0) as m,
+    ):
+        r = m.chat(CHAT_MODELS["anthropic"], user="hello")
+    assert (r.text, r.usage) == ("abc", usage)
+    with psycopg.connect(conninfo) as conn:
+        row = conn.execute("SELECT usage, response FROM exchanges").fetchone()
+    assert row == (usage, body)
+
+
 #: Jev's questions, by name, as its API takes them.
 QUESTIONS = {
     "assay": {

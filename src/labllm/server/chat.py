@@ -1,5 +1,6 @@
 """The real chat provider: one attempt through LiteLLM, with each provider's settings."""
 
+import json
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
@@ -27,6 +28,10 @@ _USED_UP = {
 
 class LiteLLMChat:
     """Sends a chat form through `litellm.completion`, once, with no retry of its own.
+
+    The attempt's usage and response are the provider's own body, as LiteLLM's logging hook
+    for the call received it, since LiteLLM rewrites some providers' usage; LiteLLM's are
+    kept only when that body cannot be read.
 
     Parameters
     ----------
@@ -57,17 +62,38 @@ class LiteLLMChat:
         import openai
 
         completion = self._completion or ll.completion
+        received: list[Any] = []
+
+        def keep(details: dict[str, Any]) -> None:
+            if details.get("log_event_type") == "post_api_call":
+                received.append(details.get("original_response"))
+
         try:
-            response = completion(**request(form))
+            response = completion(**request(form), logger_fn=keep)
         except openai.APIError as e:
             raise _failure(ll, form["provider"], e) from e
+        body = _body(received[-1] if received else None)
+        usage = body.get("usage") if body is not None else None
+        if not isinstance(body, dict) or not isinstance(usage, dict):
+            body = response.model_dump(mode="json")
+            usage = response.usage.model_dump(mode="json", exclude_none=True)
         return Attempt(
             output=response.choices[0].message.content or "",
-            usage=response.usage.model_dump(mode="json", exclude_none=True),
+            usage=usage,
             cost_usd=self._prices.cost(form, response),
-            response=response.model_dump(mode="json"),
+            response=body,
             input_tokens=response.usage.prompt_tokens,
         )
+
+
+def _body(original: Any) -> dict[str, Any] | None:
+    """Return the provider's response body as LiteLLM's logging hook passed it, if it is JSON."""
+    if isinstance(original, str):
+        try:
+            original = json.loads(original)
+        except ValueError:
+            return None
+    return original if isinstance(original, dict) else None
 
 
 def _failure(ll: ModuleType, provider: str, e: Exception) -> Exception:
