@@ -1,13 +1,14 @@
 """The shared call-layer suite: every test here runs against every gateway in `HARNESSES`."""
 
 import dataclasses
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
-from harness import CHAT, JEV, Harness
+from harness import CHAT, HOUR, JEV, MONDAY, PEAK, Harness
 from labllm import (
     CeilingReached,
     GatewayUnreachable,
@@ -17,8 +18,17 @@ from labllm import (
     Rejected,
     Stopped,
 )
+from labllm.peak import MARGIN_S
 
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+#: Jev's questions, by name, as its API takes them.
+QUESTIONS = {
+    "rnaseq": {"type": "noul", "instructions": "Is it RNA-seq?"},
+    "depth": {"type": "score", "instructions": "How deep?", "criteria": ["low", "mid", "high"]},
+    "human": {"type": "noul", "instructions": "Is it human?"},
+}
+#: A small answer as Jev sends one: 36 characters of JSON.
+NOUL = {"a": {"type": "noul", "noul": 0.5}}
 
 
 class Counting:
@@ -190,20 +200,85 @@ def test_one_except_catches_every_stop() -> None:
 
 
 def test_jev_answers_come_back_exactly_as_jev_returned_them(harness: Harness) -> None:
-    answers = [
-        {"id": "q1", "answer": "yes", "probability": 0.123456789012345},
-        {"id": "q2", "answer": None},
-    ]
+    # "human" unanswered, "depth" lacking level 1, a probability with a float's every digit.
+    answers = {
+        "rnaseq": {"type": "noul", "noul": 0.1234567890123456},
+        "depth": {
+            "type": "score",
+            "score": 1.5,
+            "confidence": 0.5,
+            "legend": {"0": "low", "1": "mid", "2": "high"},
+            "probabilities": {"0": 0.25, "2": 0.75},
+        },
+    }
     seen: list[dict[str, Any]] = []
     harness.provider(lambda form: seen.append(form) or answers)
-    questions = [{"id": "q1", "noul": "Is it RNA-seq?"}, "Is it human?"]
-    with harness.client().meter("jev", ceiling_usd=1.0) as m:
-        first = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=questions, tag="GSE1")
-        again = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=questions, tag="GSE1")
-    assert first.answers == answers
-    assert (first.cached, again.cached, again.answers) == (False, True, answers)
-    assert first.cost_usd > 0
-    assert (seen[0]["description"], seen[0]["questions"]) == ("GSE1: bulk RNA-seq", questions)
+    with harness.client().meter("jev", ceiling_usd=10.0) as m:
+        first = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=QUESTIONS, tag="GSE1")
+        again = m.jev(JEV, description="GSE1: bulk RNA-seq", questions=QUESTIONS, tag="GSE1")
+    for r in (first, again):
+        assert json.dumps(r.answers) == json.dumps(answers)  # key order included
+    assert (first.cached, again.cached) == (False, True)
+    assert first.cost_usd == pytest.approx(len(json.dumps(answers)) * 0.01)
+    assert (seen[0]["description"], seen[0]["questions"]) == ("GSE1: bulk RNA-seq", QUESTIONS)
+    paid, hit = harness.record()
+    assert paid.reply is not None
+    assert json.dumps(paid.reply["answers"]) == json.dumps(answers)
+    assert (paid.tag, hit.cached) == ("GSE1", True)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"description": "GSE2: bulk RNA-seq"},
+        {"questions": QUESTIONS | {"human": {"type": "noul", "instructions": "Is it a mouse?"}}},
+        {"questions": QUESTIONS | {"mouse": {"type": "noul", "instructions": "Is it a mouse?"}}},
+        {"model": dataclasses.replace(JEV, max_output_tokens=9)},
+    ],
+    ids=["description", "question", "added-question", "output-limit"],
+)
+def test_any_change_to_a_jev_request_misses_the_cache(
+    harness: Harness, change: dict[str, Any]
+) -> None:
+    calls: list[str] = []
+    harness.provider(lambda form: calls.append("sent") or NOUL)
+    base: dict[str, Any] = {"model": JEV, "description": "GSE1", "questions": QUESTIONS}
+    with harness.client().meter("miss", ceiling_usd=10.0) as m:
+        m.jev(**base)
+        r = m.jev(**(base | change))
+    assert (len(calls), r.cached) == (2, False)
+
+
+def test_jev_and_chat_calls_share_a_meters_ceiling_and_the_record(harness: Harness) -> None:
+    harness.provider(lambda form: NOUL if form["route"] == "jev" else "abc")
+    with harness.client().meter("both", ceiling_usd=0.40) as m:
+        m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")  # 36 characters: 0.36
+        with pytest.raises(CeilingReached):
+            m.chat(CHAT, user="hello")  # 0.36 spent and 0.10 held would cross 0.40
+        r = m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")
+    assert (r.cached, m.spent_usd, m.requests, m.cache_hits) == pytest.approx((True, 0.36, 2, 1))
+    assert [(e.cached, e.tag) for e in harness.record()] == [(False, "GSE1"), (True, "GSE1")]
+
+
+@pytest.mark.parametrize("error", [ProviderUnavailable, Rejected])
+def test_a_jev_error_reaches_the_caller_and_is_not_cached(
+    harness: Harness, error: type[Stopped | Rejected]
+) -> None:
+    calls: list[str] = []
+
+    def failing(form: dict[str, Any]) -> Any:
+        calls.append(form["description"])
+        if len(calls) == 1:
+            raise error("Jev said no")
+        return NOUL
+
+    harness.provider(failing)
+    with harness.client().meter("errors", ceiling_usd=1.0) as m:
+        with pytest.raises(error, match="Jev said no"):
+            m.jev(JEV, description="GSE1", questions=QUESTIONS, tag="GSE1")
+        r = m.jev(JEV, description="GSE1", questions=QUESTIONS)
+    assert (r.cached, len(calls)) == (False, 2)
+    assert harness.record()[0].error == error.reason
 
 
 def test_calls_from_many_threads_are_each_answered_and_counted(harness: Harness) -> None:
@@ -214,3 +289,70 @@ def test_calls_from_many_threads_are_each_answered_and_counted(harness: Harness)
     assert (m.requests, m.cache_hits) == (40, 0)
     assert m.spent_usd == pytest.approx(40 * 0.03)
     assert len(harness.record()) == 40
+
+
+def test_an_off_peak_only_call_in_peak_waits_until_peak_ends(harness: Harness) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 2 * HOUR)  # in DeepSeek's 01:00-04:00 UTC peak
+    with harness.client().meter("night", ceiling_usd=1.0, off_peak_only=True) as m:
+        r = m.chat(PEAK, user="hello")
+    assert (r.text, sent_at) == ("abc", [MONDAY + 4 * HOUR])
+    assert len(harness.record()) == 1  # the peak reply never reached the provider
+
+
+@pytest.mark.parametrize(
+    ("model", "off_peak_only"), [(PEAK, False), (CHAT, True)], ids=["off-by-default", "no-hours"]
+)
+def test_in_peak_a_call_goes_out_at_once_unless_off_peak_only_applies(
+    harness: Harness, model: Model, off_peak_only: bool
+) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 2 * HOUR)
+    meter = {"off_peak_only": True} if off_peak_only else {}  # the default is off
+    with harness.client().meter("now", ceiling_usd=1.0, **meter) as m:
+        m.chat(model, user="hello")
+    assert sent_at == [MONDAY + 2 * HOUR]
+
+
+@pytest.mark.parametrize(
+    ("arrives", "sent"),
+    [
+        (MONDAY + HOUR - MARGIN_S - 1, MONDAY + HOUR - MARGIN_S - 1),
+        (MONDAY + HOUR - MARGIN_S, MONDAY + 4 * HOUR),
+    ],
+    ids=["just-before-the-margin", "at-the-margin"],
+)
+def test_new_off_peak_only_calls_stop_the_margin_before_peak_starts(
+    harness: Harness, arrives: float, sent: float
+) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(arrives)
+    with harness.client().meter("dusk", ceiling_usd=1.0, off_peak_only=True) as m:
+        m.chat(PEAK, user="hello")
+    assert sent_at == [sent]
+
+
+def test_an_off_peak_only_cache_hit_is_answered_in_peak(harness: Harness) -> None:
+    harness.provider(lambda form: "abc")
+    harness.clock.sleep_until(MONDAY)
+    with harness.client().meter("replay", ceiling_usd=1.0, off_peak_only=True) as m:
+        m.chat(PEAK, user="hello")
+        harness.clock.sleep_until(MONDAY + 2 * HOUR)
+        r = m.chat(PEAK, user="hello")
+    assert (r.cached, harness.clock.now()) == (True, MONDAY + 2 * HOUR)
+
+
+def test_many_off_peak_only_calls_wait_through_peak_together(harness: Harness) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 7 * HOUR)  # in the 06:00-10:00 UTC peak
+    with (
+        harness.client().meter("crowd", ceiling_usd=10.0, off_peak_only=True) as m,
+        ThreadPoolExecutor(8) as pool,
+    ):
+        replies = list(pool.map(lambda i: m.chat(PEAK, user=f"doc {i}"), range(16)))
+    assert all(r.text == "abc" for r in replies)
+    assert sent_at == [MONDAY + 10 * HOUR] * 16

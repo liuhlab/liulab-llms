@@ -115,25 +115,35 @@ class _Refuse(BaseException):
 
 
 class _Stop:
-    """A pass's stop: the first `Stopped` error any of its units met."""
+    """A pass's stop: the first `Stopped` error any of its units met.
 
-    def __init__(self) -> None:
+    It stops the pass's meter too, which ends at once any call waiting out peak hours.
+    """
+
+    def __init__(self, meter: Meter) -> None:
         self._lock = threading.Lock()
+        self._meter = meter
         self.error: Stopped | None = None
 
     def halt(self, error: Stopped) -> None:
         with self._lock:
-            if self.error is None:
-                self.error = error
+            if self.error is not None:
+                return
+            self.error = error
+        self._meter.stop(type(error)(self.message))
 
     @property
     def reason(self) -> str | None:
         return None if self.error is None else self.error.reason
 
+    @property
+    def message(self) -> str:
+        return f"the pass stopped: {self.reason}"
+
     def check(self) -> None:
         """Raise the stop's own class if the pass has stopped, so no new call is sent."""
         if self.error is not None:
-            raise type(self.error)(f"the pass stopped: {self.error.reason}")
+            raise type(self.error)(self.message)
 
 
 class Unit:
@@ -182,7 +192,7 @@ class Unit:
             lambda: self._meter.chat(model, user=user, system=system, schema=schema, tag=self.key)
         )
 
-    def jev(self, role: str, *, description: str, questions: Sequence[Any]) -> JevReply:
+    def jev(self, role: str, *, description: str, questions: Mapping[str, Any]) -> JevReply:
         """Ask the model filling `role` Jev's closed questions, as `Meter.jev` does."""
         model = self._model(role, "jev")
         return self._send(
@@ -205,7 +215,8 @@ class Unit:
             reply = call()
         except Stopped as e:
             self._stop.halt(e)
-            self._met(f"{e.reason}: {e}")
+            # A call the stop ended unsent says so as a call never sent does.
+            self._met(str(e) if str(e) == self._stop.message else f"{e.reason}: {e}")
             raise
         with self._lock:
             self._spent += reply.cost_usd
@@ -400,6 +411,9 @@ class Task:
         tries a call, and every unit not started end unfinished, with the reason recorded.
         A unit that needs no further call keeps its ending.
 
+        With `off_peak_only`, a call that meets peak hours waits until they end, then goes
+        out; a stop ends that wait at once.
+
         Raises
         ------
         ValueError
@@ -433,7 +447,7 @@ class Task:
         )
         counts: dict[str, int] = dict.fromkeys((*ENDINGS[:3], *NOT_ENDINGS), 0)
         lock = threading.Lock()
-        stop = _Stop()
+        stop = _Stop(meter)
 
         def work(key: str) -> None:
             ended = self._run_unit(kind, key, meter, models, stop)

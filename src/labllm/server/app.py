@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
-from labllm import wire
+from labllm import peak, wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import CeilingReached, Rejected, Stopped
+from labllm.errors import CeilingReached, PeakHours, Rejected, Stopped
 from labllm.server.prices import Prices
 from labllm.server.record import Record, Row
 
@@ -53,7 +53,9 @@ class Server:
     providers
         The provider for each route it serves, `"chat"` or `"jev"`.
     clock
-        Times each exchange.
+        Times each exchange, and decides peak hours.
+    peak_margin_s
+        New off-peak-only calls stop this many seconds before peak starts.
     """
 
     def __init__(
@@ -63,11 +65,13 @@ class Server:
         providers: Mapping[str, Provider],
         *,
         clock: Clock | None = None,
+        peak_margin_s: float = peak.MARGIN_S,
     ) -> None:
         self._record = record
         self._prices = prices
         self._providers = dict(providers)
         self._clock = clock or SystemClock()
+        self._peak_margin_s = peak_margin_s
         self._lock = threading.Lock()
         self._meters: dict[str, _Meter] = {}
 
@@ -79,7 +83,7 @@ class Server:
             if wire.PATHS[call.form["route"]] != path:
                 raise Rejected(f"{path} does not take a {call.form['route']} call")
             return wire.encode_reply(self._answer(call))
-        except (Stopped, Rejected) as e:
+        except (Stopped, Rejected, PeakHours) as e:
             return wire.encode_error(e)
         except Exception as e:
             log.exception("the gateway failed on a call to %s", path)
@@ -108,6 +112,8 @@ class Server:
         provider = self._providers.get(form["route"])
         if provider is None:
             raise Rejected(f"this gateway does not serve {form['route']} calls yet")
+        if call.off_peak_only:
+            peak.check(self._prices.price(form).off_peak, self._clock.now(), self._peak_margin_s)
         reserve = self._prices.largest_cost(form)
         meter = self._hold(call, reserve)
         try:

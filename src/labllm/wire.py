@@ -8,13 +8,15 @@ comes back as status 200 and a JSON object; an error as another status and
 
 import hashlib
 import json
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 from labllm.errors import (
     CeilingReached,
     GatewayUnreachable,
+    PeakHours,
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
@@ -45,6 +47,7 @@ STATUS = {
     "provider_unavailable": 503,
     "gateway_unreachable": 502,
     "rejected": 400,
+    "peak_hours": 503,
 }
 
 
@@ -57,12 +60,12 @@ def chat_form(
     return {**_model_part("chat", model), "messages": messages, "schema": schema}
 
 
-def jev_form(model: Model, *, description: str, questions: Sequence[Any]) -> dict[str, Any]:
-    """Build the request form of a Jev call."""
+def jev_form(model: Model, *, description: str, questions: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the request form of a Jev call: its questions keep their names and order."""
     return {
         **_model_part("jev", model),
         "description": description,
-        "questions": list(questions),
+        "questions": dict(questions),
     }
 
 
@@ -139,9 +142,11 @@ def encode_reply(reply: dict[str, Any]) -> tuple[int, bytes]:
     return 200, json.dumps(reply, ensure_ascii=False).encode()
 
 
-def encode_error(error: Stopped | Rejected) -> tuple[int, bytes]:
-    """Encode an error as a status and body."""
-    body = {"error": error.reason, "message": str(error)}
+def encode_error(error: Stopped | Rejected | PeakHours) -> tuple[int, bytes]:
+    """Encode an error as a status and body. A peak reply adds `until`."""
+    body: dict[str, Any] = {"error": error.reason, "message": str(error)}
+    if isinstance(error, PeakHours):
+        body["until"] = error.until
     return STATUS[error.reason], json.dumps(body, ensure_ascii=False).encode()
 
 
@@ -150,7 +155,7 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
 
     Raises
     ------
-    Stopped, Rejected
+    Stopped, Rejected, PeakHours
         The class the response's reason names. A response no client understands raises
         `GatewayUnreachable`.
     """
@@ -165,4 +170,11 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
         error = _ERRORS.get(reason) if isinstance(reason, str) else None
         if error is not None:
             raise error(data.get("message", ""))
+        until = data.get("until")
+        if reason == PeakHours.reason and _seconds(until):
+            raise PeakHours(data.get("message", ""), until=float(until))
     raise GatewayUnreachable(f"the gateway answered {status}: {body[:200]!r}")
+
+
+def _seconds(value: Any) -> TypeGuard[int | float]:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)

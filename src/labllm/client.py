@@ -2,11 +2,12 @@
 
 import getpass
 import http.client
+import logging
 import math
 import os
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Protocol
@@ -14,8 +15,10 @@ from urllib.parse import urlsplit
 
 from labllm import wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import GatewayUnreachable
+from labllm.errors import GatewayUnreachable, PeakHours, Stopped
 from labllm.model import Model
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -35,7 +38,11 @@ class ChatReply:
 
 @dataclass(frozen=True)
 class JevReply:
-    """A Jev call's answer. `answers` is the JSON exactly as Jev returned it."""
+    """A Jev call's answer. `answers` is the JSON exactly as Jev returned it.
+
+    From the real gateway it is the ``answers`` object of Jev's response, keyed by question
+    name: a question Jev left unanswered is absent.
+    """
 
     answers: Any
     usage: dict[str, Any]
@@ -141,7 +148,8 @@ class Gateway:
         ceiling_usd
             Required. The gateway refuses a call whose largest possible cost would cross it.
         off_peak_only
-            Send calls only in a provider's off-peak hours.
+            Send calls only outside the peak hours in the model's price table entry. In peak
+            a call waits until they end; a model with no off-peak hours is unaffected.
 
         Raises
         ------
@@ -157,10 +165,12 @@ class Gateway:
             raise ValueError(f"ceiling_usd must be a number of dollars, not {ceiling_usd!r}")
         return Meter(self, label, float(ceiling_usd), off_peak_only)
 
-    def _send(self, path: str, body: bytes) -> dict[str, Any]:
+    def _send(self, path: str, body: bytes, wake: threading.Event) -> dict[str, Any] | None:
+        """Return the reply, or None if `wake` ended a wait for off-peak hours."""
         deadline = self._clock.now() + self.connect_retry_s
         delay = 0.5
         while True:
+            sent = self._clock.now()
             try:
                 status, out = self._transport.send(path, body)
             except ConnectionError as e:
@@ -170,7 +180,16 @@ class Gateway:
                 self._clock.sleep(min(delay, left))
                 delay = min(delay * 2, 8.0)
                 continue
-            return wire.decode_response(status, out)
+            try:
+                return wire.decode_response(status, out)
+            except PeakHours as e:
+                log.info("%s; waiting", e)
+                # A gateway clock a little behind this one must not cause a burst of resends.
+                self._clock.sleep_until(max(e.until, sent + 1.0), wake)
+                if wake.is_set():
+                    return None
+                deadline = self._clock.now() + self.connect_retry_s
+                delay = 0.5
 
 
 class Meter:
@@ -181,7 +200,8 @@ class Meter:
     identity on the gateway.
 
     Every call raises a `Stopped` subclass when the caller's loop must stop, and `Rejected`
-    when the request is a bug.
+    when the request is a bug. An off-peak-only call that meets peak hours waits, holding no
+    lock, until they end, then is sent again.
     """
 
     def __init__(self, gateway: Gateway, label: str, ceiling_usd: float, off_peak_only: bool):
@@ -195,6 +215,18 @@ class Meter:
         self.cache_hits = 0
         self._gateway = gateway
         self._lock = threading.Lock()
+        self._stopped: Stopped | None = None
+        self._wake = threading.Event()
+
+    def stop(self, error: Stopped) -> None:
+        """Send no further call. Calls already sent finish.
+
+        Each later call, and each one waiting out peak hours, raises `error`'s class with its
+        message at once.
+        """
+        with self._lock:
+            self._stopped = self._stopped or error
+        self._wake.set()
 
     def __enter__(self) -> "Meter":
         """Return the meter."""
@@ -231,15 +263,20 @@ class Meter:
         model: Model,
         *,
         description: str,
-        questions: Sequence[Any],
+        questions: Mapping[str, Any],
         tag: str | None = None,
     ) -> JevReply:
-        """Ask Jev closed questions about `description` and wait for its answers."""
+        """Ask Jev closed questions about `description` and wait for its answers.
+
+        `questions` maps each name to a question as Jev's API takes it, such as
+        ``{"type": "noul", "instructions": "Is it human?"}``; Jev answers under the same names.
+        """
         form = wire.jev_form(model, description=description, questions=questions)
         r = self._call(form, tag)
         return JevReply(r["answers"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"])
 
     def _call(self, form: dict[str, Any], tag: str | None) -> dict[str, Any]:
+        path = wire.PATHS[form["route"]]
         call = wire.Call(
             form=form,
             meter=self.id,
@@ -250,7 +287,12 @@ class Meter:
             repo=self._gateway.repo,
             tag=tag,
         )
-        r = self._gateway._send(wire.PATHS[form["route"]], call.encode())
+        r = None if self._wake.is_set() else self._gateway._send(path, call.encode(), self._wake)
+        if r is None:
+            with self._lock:
+                stopped = self._stopped
+            assert stopped is not None
+            raise type(stopped)(str(stopped))
         try:
             cost, first, cached = float(r["cost_usd"]), float(r["first_cost_usd"]), r["cached"]
         except (KeyError, TypeError, ValueError) as e:

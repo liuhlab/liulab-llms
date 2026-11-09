@@ -16,8 +16,8 @@ It prints the address it serves, `http://127.0.0.1:8000` unless you pass `--port
 with Ctrl-C.
 
 To call real models, it needs the provider keys. Set them before you start it, under the
-names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Without a key, calls
-to that provider fail.
+names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Jev's key goes in
+`TYPESAFE_API_KEY`. Without a key, calls to that provider fail.
 
 ## Point the library at it
 
@@ -35,11 +35,16 @@ price.
 
 ```toml
 database = "dbname=labllm"
+peak_margin_minutes = 5
 
 [prices."my-model"]
 input_usd_per_million = 0.5
 output_usd_per_million = 2.0
 ```
+
+Some providers, such as DeepSeek, charge less outside their busy hours. A caller can ask for
+its calls to go out only at those times. `peak_margin_minutes` is how long before the busy
+hours start the gateway stops sending such calls. It is 5 unless you set it.
 
 Pass it with `--settings settings.toml`. With `--throwaway`, the database line is ignored.
 

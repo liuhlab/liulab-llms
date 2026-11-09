@@ -4,11 +4,12 @@ import getpass
 import socket
 import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from harness import CHAT, PRICES
+from harness import CHAT, HOUR, MONDAY, PEAK, PRICES
 from labllm import Gateway, GatewayUnreachable
 from labllm.testing import FakeClock, FakeGateway
 
@@ -55,6 +56,34 @@ def test_a_gateway_that_stays_down_stops_the_caller(fake: FakeGateway) -> None:
         m.chat(CHAT, user="hello")
     assert fake.clock.now() >= Gateway.connect_retry_s
     assert fake.record == []
+
+
+class HeldClock(FakeClock):
+    """A fake clock whose `sleep_until` blocks until the test lets time pass."""
+
+    def __init__(self, start: float) -> None:
+        super().__init__(start)
+        self.waiting, self.go = threading.Event(), threading.Event()
+
+    def sleep_until(self, t: float, wake: threading.Event | None = None) -> None:
+        self.waiting.set()
+        assert self.go.wait(timeout=10)
+        super().sleep_until(t, wake)
+
+
+def test_a_call_waiting_through_peak_holds_up_no_other_call() -> None:
+    clock = HeldClock(start=MONDAY + 2 * HOUR)
+    fake = FakeGateway(lambda form: "abc", prices=PRICES, clock=clock)
+    with (
+        fake.client().meter("pass", ceiling_usd=1.0, off_peak_only=True) as m,
+        ThreadPoolExecutor(2) as pool,
+    ):
+        waiting = pool.submit(m.chat, PEAK, user="peak")
+        assert clock.waiting.wait(timeout=10)
+        assert pool.submit(m.chat, CHAT, user="other").result(timeout=5).text == "abc"
+        clock.go.set()
+        assert waiting.result(timeout=5).text == "abc"
+    assert m.requests == 2
 
 
 def test_an_answer_no_client_understands_stops_the_caller() -> None:

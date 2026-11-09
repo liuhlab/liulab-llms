@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from labllm.peak import OffPeak
+
 
 @dataclass(frozen=True)
 class Model:
@@ -26,7 +28,8 @@ class Model:
 
 @dataclass(frozen=True)
 class Price:
-    """What a model costs, in dollars per token."""
+    """What a model costs, in dollars per token at its dearest hour, and its off-peak hours."""
 
     input_usd_per_token: float
     output_usd_per_token: float
+    off_peak: OffPeak | None = None

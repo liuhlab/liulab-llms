@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import labllm
+from harness import DEEPSEEK_OFF_PEAK, HOUR, MONDAY
 from labllm import (
     CeilingReached,
     Held,
@@ -31,7 +32,7 @@ from labllm import (
     UnitKind,
     UnknownLayout,
 )
-from labllm.testing import FakeGateway, Price
+from labllm.testing import FakeClock, FakeGateway, OffPeak, Price
 
 WRITER = Model("openai", "test-writer", max_output_tokens=50)
 PRICES = {WRITER.name: Price(input_usd_per_token=0.0, output_usd_per_token=0.001)}
@@ -232,7 +233,8 @@ def test_every_answer_is_stamped(task: Task) -> None:
 
     def split_and_judge(u: Unit) -> Any:
         answer = split(u)
-        u.jev("judge", description=u.inputs.data, questions=["Is it a colour?"])
+        colour = {"type": "noul", "instructions": "Is it a colour?"}
+        u.jev("judge", description=u.inputs.data, questions={"colour": colour})
         return answer
 
     k = kind(
@@ -556,6 +558,79 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
     assert {x.tag for x in fake.record} <= {"a", "b", "c"}
     # '{"words": ["word", "a"]}' is 24 output tokens at 0.001 each, and so is b's.
     assert result.spent_usd == pytest.approx(0.048)
+
+
+#: The test's writer with DeepSeek's off-peak hours.
+NIGHT_WRITER = Model("deepseek", "test-night-writer", max_output_tokens=50)
+NIGHT_PRICES = {NIGHT_WRITER.name: Price(0.0, 0.001, off_peak=OffPeak.read(DEEPSEEK_OFF_PEAK))}
+
+
+@pytest.mark.parametrize(
+    ("options", "sent"),
+    [({"off_peak_only": True}, MONDAY + 4 * HOUR), ({}, MONDAY + 2 * HOUR)],
+    ids=["off-peak-only", "default"],
+)
+def test_an_off_peak_only_pass_started_in_peak_waits_and_continues_by_itself(
+    tmp_path: Path, options: dict[str, Any], sent: float
+) -> None:
+    sent_at: list[float] = []
+    fake = FakeGateway(
+        lambda form: sent_at.append(fake.clock.now()) or split_words(form),
+        prices=NIGHT_PRICES,
+        clock=FakeClock(MONDAY + 2 * HOUR),  # in DeepSeek's 01:00-04:00 UTC peak
+    )
+    with open_task(tmp_path, fake) as t:
+        result = t.run_pass(
+            kind(),
+            list(TEXTS),
+            models={"writer": NIGHT_WRITER},
+            ceiling_usd=1.0,
+            label="night",
+            **options,
+        )
+    assert result.counts["settled"] == 3
+    assert sent_at == [sent] * 3
+    assert [x.off_peak_only for x in fake.record] == [bool(options)] * 3
+
+
+class StillClock(FakeClock):
+    """A fake clock that never reaches a time waited for: only a wake ends the wait."""
+
+    def __init__(self, start: float) -> None:
+        super().__init__(start)
+        self.waiting = threading.Event()
+
+    def sleep_until(self, t: float, wake: threading.Event | None = None) -> None:
+        self.waiting.set()
+        assert wake is not None
+        assert wake.wait(MEET_S)
+
+
+def test_a_stop_ends_a_units_wait_for_off_peak_hours_at_once(tmp_path: Path) -> None:
+    clock = StillClock(MONDAY + 2 * HOUR)
+
+    def stop_while_a_waits(u: Unit) -> Any:
+        if u.key == "b":
+            assert clock.waiting.wait(MEET_S)
+            fake.refuse_connections()
+        return split(u)
+
+    fake = FakeGateway(split_words, prices=NIGHT_PRICES, clock=clock)
+    with open_task(tmp_path, fake) as t:
+        k = kind(run=stop_while_a_waits)
+        result = t.run_pass(
+            k,
+            ["a", "b"],
+            models={"writer": NIGHT_WRITER},
+            ceiling_usd=1.0,
+            label="night",
+            off_peak_only=True,
+            units_at_once=2,
+        )
+        (a,) = t.outcomes(k, "a")
+    assert result.stopped == "gateway_unreachable"
+    assert (a.ending, a.reason) == ("unfinished", "the pass stopped: gateway_unreachable")
+    assert fake.record == []
 
 
 def test_rerunning_a_stopped_pass_resumes_it(task: Task) -> None:
