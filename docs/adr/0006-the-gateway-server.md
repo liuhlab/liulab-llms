@@ -11,37 +11,36 @@ search:
 that no LiteLLM advisory names. conda-forge's newest, 1.106.0, builds the compiled part
 from source, but the master-key advisory names it; that advisory is about the proxy, and
 a rule with no exceptions is easier to keep. The cost: a wheel BerriAI compiled, with no
-provenance. Moving the pin means re-reading the research note's points at the new tag.
+provenance. Moving the pin means re-checking, at the new tag, the points in
+[the call layer's research resolution](https://github.com/liuhlab/liulab-llms/issues/2).
 
 **The standard library's `ThreadingHTTPServer`.** No package to pin, and a thread per call
 suits blocking calls that wait at the gateway. The cost: no defence against slow or
-hostile clients. That is safe only because the gateway listens on loopback behind SSH.
-psycopg 3 with its pool talks to PostgreSQL; conda-forge's `postgresql` gives the tests,
-and `--throwaway`, a server of their own.
+hostile clients, safe only because the gateway listens on loopback behind SSH. psycopg 3
+talks to PostgreSQL; conda-forge's `postgresql` gives the tests, and `--throwaway`, a
+server of their own.
 
 **The provider seam is a function from request form to `Attempt`**: output, usage, cost
-and whole response. Tests play it; `LiteLLMChat` is the real chat one, and takes a
-stand-in for `litellm.completion` so provider settings are tested too. A provider prices
-its own response, because LiteLLM's cost function needs LiteLLM's response; a stand-in's
-cost is the test's word.
+and whole response. Tests play it; `LiteLLMChat`, the real chat one, takes a stand-in for
+`litellm.completion` so provider settings are tested too. A provider prices its own
+response, because LiteLLM's cost function needs LiteLLM's response.
 
 **One table, `exchanges`, holds the record.** Bodies are `json`, not `jsonb`, so a form
-keeps its key order. The cache entry is a key's first successful row not retired, found
-through a partial index. A call that misses the cache claims its key in memory; an identical
-call waits for the claim, then reads the cache again, so a request is paid once. The cost: it
-waits through the first call's retries. An admin retires a key with
+keeps its key order. The cache entry is a key's first finished successful row not retired.
+A call that misses the cache claims its key in memory; an identical call waits for the
+claim, then reads the cache again, so a request is paid once, at the cost of waiting
+through the first call's retries. An admin retires a key with
 `UPDATE exchanges SET retired_at = now() WHERE key = '…' AND retired_at IS NULL`. An
-attempt's row is added when it starts, with its reservation, and finished when it ends. A
-meter's spend is summed from its rows the first time the server sees it after a start, an
-unfinished row at its reservation, so a crash mid-call keeps the ceiling.
+attempt's row is added when it starts and finished when it ends. A meter's spend is summed
+from its rows when the server first sees it, an unfinished row at its reservation, so a
+crash mid-call keeps the ceiling.
 
 ## Consequences
 
-- The ceiling's input estimate is the UTF-8 bytes of everything sent as input, as JSON: the
-  messages with their roles, and the schema. That bounds a byte-level tokenizer's count, but
-  is too high for a rate limit on input tokens.
-- The record keeps the provider's own response body and usage, taken from the per-call
-  `logger_fn` hook, which sees the body before LiteLLM rewrites Claude's usage. LiteLLM's
-  response and usage stand in only when that body is not JSON with a usage object.
+- The ceiling's input estimate is the UTF-8 bytes of everything sent as input, as JSON,
+  the schema included: a bound on a byte-level tokenizer, too high for a rate limit.
+- The record keeps the provider's own body and usage, from the per-call `logger_fn` hook,
+  which sees the body before LiteLLM rewrites Claude's usage. LiteLLM's stand in only when
+  that body is not JSON with a usage object.
 - An empty reply is an error, never a cache entry.
-- A later column is one more `ADD COLUMN IF NOT EXISTS` at the end of `record.SCHEMA`.
+- A later column is one more statement at the end of `record.SCHEMA`.
