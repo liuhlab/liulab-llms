@@ -277,9 +277,10 @@ class Unit:
         raise _Refuse(name, message)
 
     def settle(self, answer: Any) -> NoReturn:
-        """End the unit settled with `answer`, decided by code alone.
+        """End the unit with `answer`, decided by code alone.
 
-        The answer must fit the answer schema; the answer checks do not run on it.
+        The answer must fit the answer schema; the answer checks do not run on it. The unit
+        ends settled unless a check recorded with `check` failed, then unsettled.
         """
         raise _Settle(answer)
 
@@ -515,7 +516,8 @@ class Task:
                 answer = kind.run(unit)
             except _Settle as s:
                 ended.answer_json = kind._fit(s.answer)
-                ended.ending = "settled"
+                failed = any(not c.passed for c in ended.checks)
+                ended.ending = "unsettled" if failed else "settled"
             except _Refuse as r:
                 unit.check(r.name, r.message)
                 ended.ending, ended.reason = "refused", r.message

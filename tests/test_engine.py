@@ -161,6 +161,20 @@ def test_settle_ends_the_unit_from_code_alone(task: Task, fake: FakeGateway) -> 
     assert fake.record == []
 
 
+def test_settle_after_a_failed_check_leaves_the_answer_unsettled(task: Task) -> None:
+    def checked_then_settled(u: Unit) -> Any:
+        u.check("one_word", "two words")
+        u.settle({"words": u.inputs.data.split()})
+
+    k = kind(run=checked_then_settled)
+    result = run(task, k, ["a"])
+    a = task.current(k, "a")
+    assert a is not None
+    assert (a.ending, a.answer) == ("unsettled", {"words": ["red", "green"]})
+    assert [(x.name, x.message) for x in a.checks] == [("one_word", "two words")]
+    assert result.counts["unsettled"] == 1
+
+
 def test_a_held_unit_records_its_reason_and_changes_nothing(task: Task) -> None:
     run(task, kind(), ["a"])
 

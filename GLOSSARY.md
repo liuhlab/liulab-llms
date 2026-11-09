@@ -106,8 +106,8 @@ _Avoid_: inbox, backlog, triage list
 
 ### Settled
 
-An ending: the kind returned an answer and every check passed, or a person overrode a failed
-check with a reason, or its code alone settled the unit.
+An ending: the unit has an answer and every check passed, or a person overrode a failed check
+with a reason. Code alone may settle a unit, unless a check it recorded failed.
 _Avoid_: done, accepted
 
 ### Stamp
@@ -146,8 +146,8 @@ _Avoid_: step list, pipeline
 
 ### Unsettled
 
-An ending: the kind returned an answer that fits its schema, but a check failed. The answer
-is kept with each failed check's message.
+An ending: the unit has an answer that fits its schema, but a check failed. The answer is
+kept with each failed check's message.
 _Avoid_: doubtful, partial
 
 ### Waiting call
