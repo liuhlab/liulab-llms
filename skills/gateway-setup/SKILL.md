@@ -109,14 +109,16 @@ Check both halves with the key: the tunnel answers, and `ssh tunnel@<gateway-ip>
 ## Restore from the nightly dump
 
 Live once anyone is served. The dump is the sure copy. Restore it into a new database, compare
-it with `sudo labllm-db psql -d labllm_restored`, then swap the names:
+it with `sudo labllm-db psql -d labllm_restored`, then quit that session and swap the names.
+The swap renames both or neither; an open session on either database makes it fail:
 
 ```bash
 gcloud storage ls gs://<bucket>/
 ssh llm-gateway 'sudo labllm-db createdb labllm_restored &&
   gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm_restored'
 ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
-  sudo labllm-db psql -d postgres -c "ALTER DATABASE labllm RENAME TO labllm_before_restore" \
+  sudo labllm-db psql -d postgres -v ON_ERROR_STOP=1 -1 \
+    -c "ALTER DATABASE labllm RENAME TO labllm_before_restore" \
     -c "ALTER DATABASE labllm_restored RENAME TO labllm" &&
   sudo systemctl start labllm-gateway'
 ```
