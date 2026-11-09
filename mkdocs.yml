@@ -18,6 +18,7 @@ site_description: "Calls language models for lab repos through one shared gatewa
 # rule `agent-docs-unpublished` fails the build if you do.
 nav:
   - Home: index.md
+  - Run the gateway: gateway.md
   - API reference: api.md
 
 # What `--strict` catches. Every row was built against the pinned zensical and watched, not

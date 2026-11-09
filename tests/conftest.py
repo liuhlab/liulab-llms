@@ -2,10 +2,11 @@ from collections.abc import Iterator
 
 import pytest
 
+from gateway_harness import gateway_harness
 from harness import PRICES, Harness, HarnessFactory, fake_harness
 
 #: Every gateway the shared call-layer suite runs against.
-HARNESSES: dict[str, HarnessFactory] = {"fake": fake_harness}
+HARNESSES: dict[str, HarnessFactory] = {"fake": fake_harness, "gateway": gateway_harness}
 
 
 @pytest.fixture(params=sorted(HARNESSES))

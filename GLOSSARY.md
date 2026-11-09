@@ -31,6 +31,13 @@ A group of calls under one ceiling, with its own identity on the gateway. Its la
 people, so two meters with one label never share a ceiling. A pass opens one meter.
 _Avoid_: session, budget
 
+### Record
+
+The gateway's one table of every exchange, which is also its response cache: the cache
+entry for a request is its first successful exchange not retired. A bad entry is retired by
+hand and stays in the record. Each meter's spend is rebuilt from it after a restart.
+_Avoid_: log, transcript, cache table
+
 ### Request form
 
 What decides a call's answer, as `labllm.wire` builds it: provider, exact model name,

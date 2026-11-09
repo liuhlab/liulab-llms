@@ -10,18 +10,13 @@ from typing import Any
 from labllm import wire
 from labllm.client import Gateway
 from labllm.errors import CeilingReached, Rejected, Stopped
+from labllm.model import Price
+
+__all__ = ["Exchange", "FakeClock", "FakeGateway", "Price", "Provider"]
 
 #: Plays the provider: takes a request form and returns the reply text (chat) or Jev's
 #: answers. It may raise any `Stopped` subclass or `Rejected`, as the gateway would.
 Provider = Callable[[dict[str, Any]], Any]
-
-
-@dataclass(frozen=True)
-class Price:
-    """What a model costs, in dollars per token."""
-
-    input_usd_per_token: float
-    output_usd_per_token: float
 
 
 @dataclass(frozen=True)
