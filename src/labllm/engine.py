@@ -1,0 +1,413 @@
+"""The engine: a repo's unit kinds, and passes that run them over many units."""
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import traceback
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, packages_distributions, version
+from pathlib import Path
+from types import TracebackType
+from typing import Any, Literal, NoReturn
+
+import fastjsonschema
+
+from labllm.client import ChatReply, Gateway, JevReply, Meter
+from labllm.errors import Stopped
+from labllm.model import Model
+from labllm.state import ENDINGS, NOT_ENDINGS, CheckResult, Outcome, PassStart, StateFile
+
+
+class Held(Exception):  # noqa: N818 - the name callers raise
+    """Raise from `load`: an input the unit needs is not there yet. The message is recorded."""
+
+
+@dataclass(frozen=True)
+class Inputs:
+    """What `load` returns for one unit: its inputs, and a tag the engine only compares."""
+
+    data: Any
+    tag: str
+
+
+@dataclass(frozen=True)
+class Role:
+    """A model's job in a kind: the route it is called on, and what it does there."""
+
+    route: Literal["chat", "jev"]
+    what: str = ""
+
+
+#: A check on an answer: given the unit's inputs and the answer, a failure message or None.
+AnswerCheck = Callable[[Inputs, Any], str | None]
+
+
+@dataclass(frozen=True)
+class UnitKind:
+    """A repo's declaration of one kind of unit, its work written as one plain function.
+
+    `run` takes a `Unit` and returns the unit's answer. Each answer check is named by its
+    function's name, so two must not share one.
+
+    Raises
+    ------
+    ValueError
+        A role's route is not chat or Jev, or two answer checks share a name.
+    fastjsonschema.JsonSchemaDefinitionException
+        `answer_schema` is not a JSON Schema.
+    """
+
+    name: str
+    version: str
+    roles: Mapping[str, Role]
+    load: Callable[[str], Inputs]
+    run: Callable[["Unit"], Any]
+    answer_schema: dict[str, Any]
+    answer_checks: Sequence[AnswerCheck] = ()
+    _validate: Callable[[Any], Any] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Check the declaration and compile the answer schema."""
+        for role, r in self.roles.items():
+            if r.route not in ("chat", "jev"):
+                raise ValueError(f"role {role!r} has route {r.route!r}, not 'chat' or 'jev'")
+        names = [c.__name__ for c in self.answer_checks]
+        if len(set(names)) != len(names) or "<lambda>" in names:
+            raise ValueError(f"answer checks need distinct function names, not {names}")
+        validate = fastjsonschema.compile(self.answer_schema, use_default=False)
+        object.__setattr__(self, "_validate", validate)
+
+    def _fit(self, answer: Any) -> str:
+        """Return the answer as JSON, or raise if it does not fit the answer schema."""
+        text = json.dumps(answer, ensure_ascii=False, allow_nan=False)
+        try:
+            self._validate(json.loads(text))
+        except fastjsonschema.JsonSchemaValueException as e:
+            raise ValueError(f"the answer does not fit the answer schema: {e.message}") from e
+        return text
+
+
+class _Settle(BaseException):
+    """Ends a unit settled. A `BaseException`, so the kind's `except Exception` lets it by."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+
+
+class _Refuse(BaseException):
+    def __init__(self, name: str, message: str) -> None:
+        self.name, self.message = name, message
+
+
+class Unit:
+    """One unit as its kind's function sees it: its key, its inputs, and models by role.
+
+    Every call is tagged with the unit's key on the pass's meter.
+    """
+
+    def __init__(
+        self, key: str, inputs: Inputs, kind: UnitKind, meter: Meter, models: Mapping[str, Model]
+    ) -> None:
+        self.key = key
+        self.inputs = inputs
+        self._kind = kind
+        self._meter = meter
+        self._models = models
+        self._checks: list[CheckResult] = []
+        self._lock = threading.Lock()
+
+    def chat(
+        self,
+        role: str,
+        *,
+        user: str,
+        system: str | None = None,
+        schema: dict[str, Any] | None = None,
+    ) -> ChatReply:
+        """Send one chat request to the model filling `role`, as `Meter.chat` does."""
+        model = self._model(role, "chat")
+        return self._meter.chat(model, user=user, system=system, schema=schema, tag=self.key)
+
+    def jev(self, role: str, *, description: str, questions: Sequence[Any]) -> JevReply:
+        """Ask the model filling `role` Jev's closed questions, as `Meter.jev` does."""
+        model = self._model(role, "jev")
+        return self._meter.jev(model, description=description, questions=questions, tag=self.key)
+
+    def check(self, name: str, message: str | None) -> None:
+        """Record a check: `message` None passes, a string fails and makes the unit unsettled."""
+        with self._lock:
+            self._checks.append(CheckResult(name, message))
+
+    def refuse(self, name: str, message: str) -> NoReturn:
+        """End the unit refused, keeping no answer. The message is recorded as a failed check."""
+        raise _Refuse(name, message)
+
+    def settle(self, answer: Any) -> NoReturn:
+        """End the unit settled with `answer`, decided by code alone.
+
+        The answer must fit the answer schema; the answer checks do not run on it.
+        """
+        raise _Settle(answer)
+
+    def _model(self, role: str, route: str) -> Model:
+        r = self._kind.roles.get(role)
+        if r is None or r.route != route:
+            raise ValueError(f"kind {self._kind.name!r} has no {route} role {role!r}")
+        return self._models[role]
+
+
+@dataclass(frozen=True)
+class PassResult:
+    """What a pass returns. The calling command sets its own exit code from it.
+
+    `counts` has every ending and not-ending a pass gives, zeros included. `stopped` is the
+    reason of the `Stopped` error that stopped the pass, or None. The dollars, requests and
+    cache hits are the pass's meter's counters.
+    """
+
+    pass_id: int
+    meter: str
+    counts: dict[str, int]
+    stopped: str | None
+    spent_usd: float
+    first_cost_usd: float
+    requests: int
+    cache_hits: int
+
+
+@dataclass
+class _Ended:
+    ending: str
+    inputs_tag: str | None = None
+    answer_json: str | None = None
+    reason: str | None = None
+    checks: list[CheckResult] = field(default_factory=list)
+    stop: str | None = None
+
+
+class Task:
+    """One task's state, kept in one SQLite file in `folder`, and the passes run on it.
+
+    One process holds a task at a time. `state.holder`, beside the state file, names it while
+    it holds the task; a holder counts as gone once its process ends, or once that file goes
+    two minutes untouched. Close the task, or end the process, to let another open it.
+
+    Parameters
+    ----------
+    folder
+        Holds the state file, `state.sqlite`. Made if missing.
+    gateway
+        Every pass's calls go through it.
+    reviews
+        The folder of the kinds' review files.
+
+    Raises
+    ------
+    TaskInUse
+        Another process holds the task. The message names it.
+    UnknownLayout
+        The state file is not one this version of liulab-llms can read.
+    """
+
+    def __init__(
+        self, folder: str | os.PathLike[str], *, gateway: Gateway, reviews: str | os.PathLike[str]
+    ) -> None:
+        self.folder = Path(folder)
+        self.reviews = Path(reviews)
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.path = self.folder / "state.sqlite"
+        self._gateway = gateway
+        self._state = StateFile(self.path)
+
+    def close(self) -> None:
+        """Close the state file."""
+        self._state.close()
+
+    def __enter__(self) -> "Task":
+        """Return the task."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Close the task."""
+        self.close()
+
+    def run_pass(
+        self,
+        kind: UnitKind,
+        keys: Iterable[str],
+        *,
+        models: Mapping[str, Model],
+        ceiling_usd: float,
+        label: str,
+        off_peak_only: bool = False,
+    ) -> PassResult:
+        """Run `kind` over `keys`, in the order given, under one new meter.
+
+        Each unit's outcome is recorded as it ends. A `Stopped` error stops the pass: the unit
+        that met it and every unit after it end unfinished, with the reason recorded.
+
+        Raises
+        ------
+        ValueError
+            `models` does not fill exactly the kind's roles, or `keys` repeats a key.
+        TypeError
+            A key is not a string.
+        """
+        keys = list(keys)
+        if not all(isinstance(key, str) for key in keys):
+            raise TypeError("every key must be a string")
+        if set(models) != set(kind.roles):
+            raise ValueError(f"models fill roles {sorted(models)}; kind has {sorted(kind.roles)}")
+        if len(set(keys)) != len(keys):
+            raise ValueError("keys repeat a key")
+        meter = self._gateway.meter(label, ceiling_usd=ceiling_usd, off_peak_only=off_peak_only)
+        pass_id = self._state.start_pass(
+            PassStart(
+                meter=meter.id,
+                kind=kind.name,
+                kind_version=kind.version,
+                label=label,
+                models=dict(models),
+                ceiling_usd=meter.ceiling_usd,
+                off_peak_only=off_peak_only,
+                repo_version=_repo_version(kind.run),
+                labllm_version=version("liulab-llms"),
+            )
+        )
+        counts: dict[str, int] = dict.fromkeys((*ENDINGS[:3], *NOT_ENDINGS), 0)
+        stopped: str | None = None
+        with meter:
+            for key in keys:
+                if stopped is None:
+                    ended = self._run_unit(kind, key, meter, models)
+                    stopped = ended.stop
+                else:
+                    ended = _Ended("unfinished", reason=f"the pass stopped: {stopped}")
+                self._state.record(
+                    kind.name,
+                    key,
+                    pass_id,
+                    ending=ended.ending,
+                    inputs_tag=ended.inputs_tag,
+                    answer_json=ended.answer_json,
+                    reason=ended.reason,
+                    checks=ended.checks,
+                )
+                counts[ended.ending] += 1
+        self._state.end_pass(
+            pass_id,
+            stopped=stopped,
+            spent_usd=meter.spent_usd,
+            first_cost_usd=meter.first_cost_usd,
+            requests=meter.requests,
+            cache_hits=meter.cache_hits,
+        )
+        return PassResult(
+            pass_id=pass_id,
+            meter=meter.id,
+            counts=counts,
+            stopped=stopped,
+            spent_usd=meter.spent_usd,
+            first_cost_usd=meter.first_cost_usd,
+            requests=meter.requests,
+            cache_hits=meter.cache_hits,
+        )
+
+    def _run_unit(
+        self, kind: UnitKind, key: str, meter: Meter, models: Mapping[str, Model]
+    ) -> _Ended:
+        ended = _Ended("unfinished")
+        try:
+            inputs = kind.load(key)
+            if not isinstance(inputs, Inputs) or not isinstance(inputs.tag, str):
+                raise TypeError(f"load returned {inputs!r}, not Inputs with a str tag")
+            ended.inputs_tag = inputs.tag
+            unit = Unit(key, inputs, kind, meter, models)
+            ended.checks = unit._checks
+            try:
+                answer = kind.run(unit)
+            except _Settle as s:
+                ended.answer_json = kind._fit(s.answer)
+                ended.ending = "settled"
+                return ended
+            except _Refuse as r:
+                unit.check(r.name, r.message)
+                ended.ending, ended.reason = "refused", r.message
+                return ended
+            ended.answer_json = kind._fit(answer)
+            stored = json.loads(ended.answer_json)
+            for check in kind.answer_checks:
+                unit.check(check.__name__, check(inputs, stored))
+            failed = any(not c.passed for c in ended.checks)
+            ended.ending = "unsettled" if failed else "settled"
+            return ended
+        except Held as h:
+            return _Ended("held", ended.inputs_tag, reason=str(h), checks=ended.checks)
+        except Stopped as e:
+            reason = f"{e.reason}: {e}"
+            return _Ended("unfinished", ended.inputs_tag, None, reason, ended.checks, e.reason)
+        except Exception as e:
+            reason = "".join(traceback.format_exception(e, limit=-3))
+            return _Ended("unfinished", ended.inputs_tag, reason=reason, checks=ended.checks)
+
+    def current(self, kind: UnitKind, key: str) -> Outcome | None:
+        """Return the unit's current answer: its outcome in the latest pass that reached an ending.
+
+        None if no pass has reached an ending for it. Unfinished and held change nothing.
+        """
+        return self._state.current(kind.name, key)
+
+    def outcomes(self, kind: UnitKind, key: str) -> list[Outcome]:
+        """Return the unit's outcome in every pass that ran it, oldest first."""
+        return self._state.outcomes(kind.name, key)
+
+    def keys(self, kind: UnitKind, *, endings: Iterable[str]) -> list[str]:
+        """Return the keys whose current ending is one of `endings`, in key order.
+
+        Raises
+        ------
+        ValueError
+            One of `endings` is not an ending.
+        """
+        endings = list(endings)
+        if unknown := set(endings) - set(ENDINGS):
+            raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
+        return self._state.keys(kind.name, endings)
+
+
+def _repo_version(fn: Callable[..., Any]) -> str:
+    """Return the code version of the repo that defines `fn`.
+
+    `git describe` of the checkout holding its source, or else the version of the installed
+    distribution holding its module, or else "unknown".
+    """
+    module = sys.modules.get(getattr(fn, "__module__", "") or "")
+    file = getattr(module, "__file__", None)
+    if file:
+        try:
+            out = subprocess.run(
+                ["git", "describe", "--tags", "--always", "--dirty", "--abbrev=12"],
+                cwd=Path(file).parent,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=True,
+            )
+            return out.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    top = (getattr(fn, "__module__", "") or "").partition(".")[0]
+    for dist in packages_distributions().get(top, []):
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            continue
+    return "unknown"
