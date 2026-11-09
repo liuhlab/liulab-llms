@@ -9,9 +9,10 @@ from typing import Any
 
 from labllm import peak, wire
 from labllm.client import Gateway
-from labllm.errors import CeilingReached, PeakHours, Rejected, Stopped
+from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
 from labllm.model import Price
 from labllm.peak import OffPeak
+from labllm.retry import Retries
 
 __all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider"]
 
@@ -49,6 +50,8 @@ class FakeClock:
     def __init__(self, start: float = 0.0) -> None:
         self._now = start
         self._lock = threading.Lock()
+        self._parked = threading.Condition(self._lock)
+        self._waiting = 0
 
     def now(self) -> float:
         """Seconds since the Unix epoch, as far as this clock has moved."""
@@ -69,6 +72,36 @@ class FakeClock:
             return
         with self._lock:
             self._now = max(self._now, t)
+
+    def wait(self, condition: threading.Condition, until: float | None = None) -> None:
+        """Move `now` forward to `until` and return; with no `until`, wait to be notified.
+
+        `until_waiting` sees each thread waiting with no `until`.
+        """
+        if until is not None:
+            self.sleep_until(until)
+            return
+        with self._parked:
+            self._waiting += 1
+            self._parked.notify_all()
+        try:
+            condition.wait()
+        finally:
+            with self._parked:
+                self._waiting -= 1
+                self._parked.notify_all()
+
+    def until_waiting(self, threads: int, timeout: float = 10.0) -> None:
+        """Block until `threads` threads wait in `wait` with no `until`.
+
+        Raises
+        ------
+        TimeoutError
+            They did not, within `timeout` real seconds.
+        """
+        with self._parked:
+            if not self._parked.wait_for(lambda: self._waiting >= threads, timeout):
+                raise TimeoutError(f"{self._waiting} threads wait, not {threads}")
 
 
 class FakeGateway:
@@ -148,46 +181,73 @@ class FakeGateway:
             hit = self._cache.get(key)
             if hit is not None:
                 self._log(call, key, cached=True)
-                return {**hit, "cost_usd": 0.0, "cached": True}
+                return {**hit, "cost_usd": 0.0, "cached": True, "attempts": 0}
             price = self._prices.get(form["model"])
             if price is None:
                 raise Rejected(f"no price for model {form['model']!r}")
-            if call.off_peak_only:
-                peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
-            input_tokens = _input_tokens(form)
-            reserve = (
+        input_tokens = _input_tokens(form)
+        reserve = (
+            input_tokens * price.input_usd_per_token
+            + form["settings"]["max_output_tokens"] * price.output_usd_per_token
+        )
+        retries = Retries(self.clock)
+        paid = 0.0
+        while True:
+            with self._lock:
+                if call.off_peak_only:
+                    peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
+                held = self._spent[meter] + self._reserved[meter]
+                if held + reserve > call.ceiling_usd:
+                    raise CeilingReached(
+                        f"meter {call.label!r} has {held:.6f} USD spent or held, and this call "
+                        f"may cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
+                    )
+                self._reserved[meter] += reserve
+            retries.attempts += 1
+            try:
+                out = self._provider(form)
+            except ProviderUnavailable as e:
+                with self._lock:
+                    self._reserved[meter] -= reserve
+                    self._log(call, key, form=form, error=e.reason)
+                self.clock.sleep_until(retries.again(e))
+                continue
+            except (Stopped, Rejected) as e:
+                with self._lock:
+                    self._reserved[meter] -= reserve
+                    self._log(call, key, form=form, error=e.reason)
+                raise
+            except BaseException:
+                with self._lock:
+                    self._reserved[meter] -= reserve
+                raise
+            field = "text" if form["route"] == "chat" else "answers"
+            output_tokens = len(out) if field == "text" else len(json.dumps(out))
+            usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+            cost = (
                 input_tokens * price.input_usd_per_token
-                + form["settings"]["max_output_tokens"] * price.output_usd_per_token
+                + output_tokens * price.output_usd_per_token
             )
-            held = self._spent[meter] + self._reserved[meter]
-            if held + reserve > call.ceiling_usd:
-                raise CeilingReached(
-                    f"meter {call.label!r} has {held:.6f} USD spent or held, and this call may "
-                    f"cost {reserve:.6f} more, over its ceiling of {call.ceiling_usd:.6f}"
-                )
-            self._reserved[meter] += reserve
-        try:
-            out = self._provider(form)
-        except (Stopped, Rejected) as e:
+            reply = {field: out, "usage": usage, "first_cost_usd": cost}
             with self._lock:
                 self._reserved[meter] -= reserve
-                self._log(call, key, form=form, error=e.reason)
-            raise
-        except BaseException:
-            with self._lock:
-                self._reserved[meter] -= reserve
-            raise
-        field = "text" if form["route"] == "chat" else "answers"
-        output_tokens = len(out) if field == "text" else len(json.dumps(out))
-        usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
-        cost = input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
-        reply = {field: out, "usage": usage, "first_cost_usd": cost}
-        with self._lock:
-            self._reserved[meter] -= reserve
-            self._spent[meter] += cost
-            self._cache.setdefault(key, reply)
-            self._log(call, key, form=form, reply=reply, cost_usd=cost)
-        return {**reply, "cost_usd": cost, "cached": False}
+                self._spent[meter] += cost
+                if not out:
+                    paid += cost
+                    empty = ProviderUnavailable("the provider sent an empty reply")
+                    self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
+                else:
+                    self._cache.setdefault(key, reply)
+                    self._log(call, key, form=form, reply=reply, cost_usd=cost)
+            if not out:
+                self.clock.sleep_until(retries.again(empty))
+                continue
+            return {
+                **reply,
+                "cost_usd": paid + cost,
+                "cached": False,
+                "attempts": retries.attempts,
+            }
 
     def _log(
         self,

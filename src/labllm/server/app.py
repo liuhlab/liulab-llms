@@ -1,5 +1,7 @@
 """The gateway's server: answers each call from the cache or a provider, under its meter's ceiling."""
 
+import dataclasses
+import itertools
 import logging
 import threading
 from collections.abc import Callable, Mapping
@@ -9,7 +11,9 @@ from typing import Any, cast
 
 from labllm import peak, wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import CeilingReached, PeakHours, Rejected, Stopped
+from labllm.errors import CeilingReached, PeakHours, ProviderUnavailable, Rejected, Stopped
+from labllm.retry import BUDGET_S, Retries
+from labllm.server.limits import Gate, Pause, RateLimit, estimate_input_tokens
 from labllm.server.prices import Prices
 from labllm.server.record import Record, Row
 
@@ -21,17 +25,21 @@ class Attempt:
     """What one attempt at a provider returned.
 
     `output` is the reply text for chat, or Jev's answers; `usage` is the provider's usage as
-    received; `response` is the provider's whole response, kept in the record.
+    received; `response` is the provider's whole response, kept in the record. `input_tokens`
+    is the input the provider counted, if known; it corrects the rate limit's estimate.
+    An empty `output` is a failed attempt, paid for and tried again.
     """
 
     output: Any
     usage: dict[str, Any]
     cost_usd: float
     response: Any = None
+    input_tokens: int | None = None
 
 
-#: Sends one request form to a provider, once. It raises a `Stopped` subclass or `Rejected`
-#: for a failure the caller must see. The seam where tests play the provider.
+#: Sends one request form to a provider, once. It raises `ProviderUnavailable` for a failure
+#: worth another attempt, with the provider's overload shape; another `Stopped` subclass or
+#: `Rejected` for one the caller must see at once. The seam where tests play the provider.
 Provider = Callable[[dict[str, Any]], Attempt]
 
 
@@ -53,9 +61,14 @@ class Server:
     providers
         The provider for each route it serves, `"chat"` or `"jev"`.
     clock
-        Times each exchange, and decides peak hours.
+        Times each exchange, decides peak hours, and runs every wait.
     peak_margin_s
         New off-peak-only calls stop this many seconds before peak starts.
+    limits
+        Rate limits by provider, such as ``"deepseek"``, or by one model, such as
+        ``"openai/gpt-5.5"``. A model's own limits replace its provider's.
+    retry_budget_s
+        How long a call keeps trying an unavailable provider after its first failure.
     """
 
     def __init__(
@@ -66,14 +79,21 @@ class Server:
         *,
         clock: Clock | None = None,
         peak_margin_s: float = peak.MARGIN_S,
+        limits: Mapping[str, RateLimit] | None = None,
+        retry_budget_s: float = BUDGET_S,
     ) -> None:
         self._record = record
         self._prices = prices
         self._providers = dict(providers)
         self._clock = clock or SystemClock()
         self._peak_margin_s = peak_margin_s
+        self._limits = dict(limits or {})
+        self._retry_budget_s = retry_budget_s
         self._lock = threading.Lock()
         self._meters: dict[str, _Meter] = {}
+        self._gates: dict[str, Gate] = {}
+        self._pauses: dict[str, Pause] = {}
+        self._arrivals = itertools.count()
 
     def answer(self, path: str, body: bytes) -> tuple[int, bytes]:
         """Answer one HTTP post with a status and body, as `labllm.wire` encodes them."""
@@ -108,49 +128,100 @@ class Server:
                 "cost_usd": 0.0,
                 "first_cost_usd": entry.cost_usd,
                 "cached": True,
+                "attempts": 0,
             }
         provider = self._providers.get(form["route"])
         if provider is None:
             raise Rejected(f"this gateway does not serve {form['route']} calls yet")
-        if call.off_peak_only:
-            peak.check(self._prices.price(form).off_peak, self._clock.now(), self._peak_margin_s)
         reserve = self._prices.largest_cost(form)
-        meter = self._hold(call, reserve)
-        try:
-            attempt = provider(form)
-        except (Stopped, Rejected) as e:
-            self._settle(meter, reserve, 0.0)
-            self._record.add(
-                Row(call, key, started, self._clock.now(), error=e.reason, message=str(e))
-            )
-            raise
-        except Exception as e:
-            self._settle(meter, reserve, 0.0)
-            self._record.add(
-                Row(call, key, started, self._clock.now(), error=Stopped.reason, message=repr(e))
-            )
-            raise
-        self._settle(meter, reserve, attempt.cost_usd)
-        reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
-        self._record.add(
-            Row(
-                call,
-                key,
-                started,
-                self._clock.now(),
-                reply=reply,
-                usage=attempt.usage,
-                response=attempt.response,
-                cost_usd=attempt.cost_usd,
-            )
-        )
-        return {
-            **reply,
-            "usage": attempt.usage,
-            "cost_usd": attempt.cost_usd,
-            "first_cost_usd": attempt.cost_usd,
-            "cached": False,
-        }
+        gate, pause = self._gate(form)
+        tokens = estimate_input_tokens(form)
+        arrival = next(self._arrivals)
+        retries = Retries(self._clock, self._retry_budget_s)
+        paid = 0.0
+        while True:
+            turn = gate.wait(arrival, tokens)
+            try:
+                if call.off_peak_only:
+                    off_peak = self._prices.price(form).off_peak
+                    peak.check(off_peak, self._clock.now(), self._peak_margin_s)
+                meter = self._hold(call, reserve)
+            except BaseException:
+                turn.cancel()
+                raise
+            retries.attempts += 1
+            sent = self._clock.now()
+            done = Row(call, key, sent, sent, attempt=retries.attempts, waited_s=sent - started)
+            input_tokens = None
+            try:
+                attempt = provider(form)
+                input_tokens = attempt.input_tokens
+            except (Stopped, Rejected) as e:
+                self._settle(meter, reserve, 0.0)
+                self._record.add(self._ended(done, error=e.reason, message=str(e)))
+                if not isinstance(e, ProviderUnavailable):
+                    raise
+                # Overload or no answer at all: every caller of this provider waits it out.
+                pause.extend(again := retries.again(e))
+                log.info("pausing %s for %.1f s: %s", form["provider"], again - sent, e)
+            except Exception as e:
+                self._settle(meter, reserve, 0.0)
+                self._record.add(self._ended(done, error=Stopped.reason, message=repr(e)))
+                raise
+            else:
+                self._settle(meter, reserve, attempt.cost_usd)
+                reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
+                if attempt.output:
+                    self._record.add(
+                        self._ended(
+                            done,
+                            reply=reply,
+                            usage=attempt.usage,
+                            response=attempt.response,
+                            cost_usd=attempt.cost_usd,
+                        )
+                    )
+                    return {
+                        **reply,
+                        "usage": attempt.usage,
+                        "cost_usd": paid + attempt.cost_usd,
+                        "first_cost_usd": attempt.cost_usd,
+                        "cached": False,
+                        "attempts": retries.attempts,
+                    }
+                paid += attempt.cost_usd
+                empty = ProviderUnavailable(f"{form['provider']} sent an empty reply", status=200)
+                self._record.add(
+                    self._ended(
+                        done,
+                        error=empty.reason,
+                        message=str(empty),
+                        usage=attempt.usage,
+                        response=attempt.response,
+                        cost_usd=attempt.cost_usd,
+                    )
+                )
+                again = retries.again(empty)
+            finally:
+                turn.done(input_tokens)
+            started = self._clock.now()
+            self._clock.sleep_until(again)
+
+    def _ended(self, row: Row, **fields: Any) -> Row:
+        return dataclasses.replace(row, finished_at=self._clock.now(), **fields)
+
+    def _gate(self, form: dict[str, Any]) -> tuple[Gate, Pause]:
+        provider = form["provider"]
+        name = f"{provider}/{form['model']}"
+        if name not in self._limits:
+            name = provider
+        with self._lock:
+            pause = self._pauses.setdefault(provider, Pause())
+            gate = self._gates.get(name)
+            if gate is None:
+                limit = self._limits.get(name, RateLimit())
+                gate = self._gates[name] = Gate(limit, pause, self._clock)
+            return gate, pause
 
     def _hold(self, call: wire.Call, reserve: float) -> _Meter:
         with self._lock:

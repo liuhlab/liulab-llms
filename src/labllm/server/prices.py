@@ -71,7 +71,7 @@ class Prices:
         """
         price = self.price(form)
         return (
-            _input_bytes(form) * price.input_usd_per_token
+            input_bytes(form) * price.input_usd_per_token
             + form["settings"]["max_output_tokens"] * price.output_usd_per_token
         )
 
@@ -100,7 +100,8 @@ class Prices:
         return input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
 
 
-def _input_bytes(form: dict[str, Any]) -> int:
+def input_bytes(form: dict[str, Any]) -> int:
+    """Return the UTF-8 bytes of a form's input: its messages, or Jev's description and questions."""
     if form["route"] == "chat":
         return sum(len(m["content"].encode()) for m in form["messages"])
     text = form["description"] + json.dumps(form["questions"], ensure_ascii=False)

@@ -41,7 +41,7 @@ class LiteLLMChat:
             The provider refused the request as malformed or unauthorized, or the form asks
             for a setting its provider does not take.
         ProviderUnavailable
-            The provider failed in any other way, or sent an empty reply.
+            The provider failed in any other way. An empty reply is returned, not raised.
         """
         ll = litellm()
         import openai
@@ -53,14 +53,12 @@ class LiteLLMChat:
             raise Rejected(f"{form['provider']} refused the request: {e}") from e
         except openai.APIError as e:
             raise ProviderUnavailable(f"{form['provider']} failed: {e}") from e
-        text = response.choices[0].message.content
-        if not text:
-            raise ProviderUnavailable(f"{form['provider']} sent an empty reply")
         return Attempt(
-            output=text,
+            output=response.choices[0].message.content or "",
             usage=response.usage.model_dump(mode="json", exclude_none=True),
             cost_usd=self._prices.cost(form, response),
             response=response.model_dump(mode="json"),
+            input_tokens=response.usage.prompt_tokens,
         )
 
 

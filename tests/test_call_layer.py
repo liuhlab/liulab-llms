@@ -169,10 +169,8 @@ def test_a_model_with_no_price_is_rejected(harness: Harness) -> None:
         m.chat(Model("openai", "no-such-price"), user="hello")
 
 
-@pytest.mark.parametrize(
-    "error", [CeilingReached, ProviderExhausted, ProviderUnavailable, GatewayUnreachable, Rejected]
-)
-def test_a_provider_error_reaches_the_caller_and_is_not_cached(
+@pytest.mark.parametrize("error", [CeilingReached, ProviderExhausted, GatewayUnreachable, Rejected])
+def test_a_provider_error_reaches_the_caller_unretried_and_is_not_cached(
     harness: Harness, error: type[Stopped | Rejected]
 ) -> None:
     calls: list[str] = []
@@ -191,6 +189,78 @@ def test_a_provider_error_reaches_the_caller_and_is_not_cached(
     assert (r.cached, len(calls)) == (False, 2)
     failed = harness.record()[0]
     assert (failed.error, failed.cost_usd, failed.tag) == (error.reason, 0.0, "doc-1")
+
+
+def test_an_unavailable_provider_is_tried_again_and_each_attempt_is_counted(
+    harness: Harness,
+) -> None:
+    calls: list[str] = []
+
+    def once(form: dict[str, Any]) -> str:
+        calls.append(form["messages"][-1]["content"])
+        if len(calls) == 1:
+            raise ProviderUnavailable("the provider is overloaded")
+        return "abc"
+
+    harness.provider(once)
+    with harness.client().meter("retry", ceiling_usd=0.1) as m:
+        r = m.chat(CHAT, user="hello", tag="doc-1")
+    assert (r.text, r.attempts, r.cached, len(calls)) == ("abc", 2, False, 2)
+    assert [(e.error, e.tag) for e in harness.record()] == [
+        ("provider_unavailable", "doc-1"),
+        (None, "doc-1"),
+    ]
+
+
+def test_an_empty_reply_is_tried_again_and_never_cached(harness: Harness) -> None:
+    replies = iter(["", "abc"])
+    harness.provider(lambda form: next(replies))
+    with harness.client().meter("empty", ceiling_usd=1.0) as m:
+        r = m.chat(CHAT, user="hello")
+        again = m.chat(CHAT, user="hello")
+    assert (r.text, r.attempts, again.text, again.cached) == ("abc", 2, "abc", True)
+    assert [(e.error, e.cached) for e in harness.record()] == [
+        ("provider_unavailable", False),
+        (None, False),
+        (None, True),
+    ]
+
+
+def test_a_provider_still_unavailable_when_the_retry_budget_ends_stops_the_caller(
+    harness: Harness,
+) -> None:
+    sent_at: list[float] = []
+
+    def down(form: dict[str, Any]) -> str:
+        sent_at.append(harness.clock.now())
+        raise ProviderUnavailable("the provider is down")
+
+    harness.provider(down)
+    start = harness.clock.now()
+    with harness.client().meter("down", ceiling_usd=0.1) as m:
+        with pytest.raises(ProviderUnavailable, match="the provider is down"):
+            m.chat(CHAT, user="hello")
+    # Each wait doubles from one second up to a minute; five minutes after the first failure
+    # no further attempt fits.
+    waits = [b - a for a, b in zip(sent_at, sent_at[1:], strict=False)]
+    assert waits == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+    assert sent_at[0] == start
+    assert [e.error for e in harness.record()] == ["provider_unavailable"] * len(sent_at)
+
+
+def test_a_provider_asking_to_wait_is_tried_again_when_it_asked(harness: Harness) -> None:
+    sent_at: list[float] = []
+
+    def busy(form: dict[str, Any]) -> str:
+        sent_at.append(harness.clock.now())
+        if len(sent_at) == 1:
+            raise ProviderUnavailable("busy", status=429, retry_after_s=30)
+        return "abc"
+
+    harness.provider(busy)
+    with harness.client().meter("busy", ceiling_usd=0.1) as m:
+        assert m.chat(CHAT, user="hello").attempts == 2
+    assert sent_at[1] - sent_at[0] == 30
 
 
 def test_one_except_catches_every_stop() -> None:
@@ -260,8 +330,8 @@ def test_jev_and_chat_calls_share_a_meters_ceiling_and_the_record(harness: Harne
     assert [(e.cached, e.tag) for e in harness.record()] == [(False, "GSE1"), (True, "GSE1")]
 
 
-@pytest.mark.parametrize("error", [ProviderUnavailable, Rejected])
-def test_a_jev_error_reaches_the_caller_and_is_not_cached(
+@pytest.mark.parametrize("error", [ProviderExhausted, Rejected])
+def test_a_jev_error_reaches_the_caller_unretried_and_is_not_cached(
     harness: Harness, error: type[Stopped | Rejected]
 ) -> None:
     calls: list[str] = []

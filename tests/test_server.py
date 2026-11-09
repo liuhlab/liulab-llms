@@ -47,11 +47,17 @@ def conninfo() -> str:
 
 @contextmanager
 def gateway(
-    conninfo: str, providers: Mapping[str, Provider], prices: Mapping[str, Price] = PRICES
+    conninfo: str,
+    providers: Mapping[str, Provider],
+    prices: Mapping[str, Price] = PRICES,
+    **settings: Any,
 ) -> Iterator[Gateway]:
+    """A client of a fresh gateway on a fake clock; `settings` go to `Server`."""
     clock = FakeClock()
-    with Record(conninfo) as record, running(Server(record, Prices(prices), providers)) as url:
-        yield Gateway(repo="tests", person="ann", transport=HttpTransport(url), clock=clock)
+    with Record(conninfo) as record:
+        server = Server(record, Prices(prices), providers, clock=clock, **settings)
+        with running(server) as url:
+            yield Gateway(repo="tests", person="ann", transport=HttpTransport(url), clock=clock)
 
 
 def send(
@@ -65,17 +71,22 @@ def send(
 class Completion:
     """Plays `litellm.completion`: keeps what it was sent and answers with LiteLLM's own mock."""
 
-    def __init__(self, text: str = '{"n": 1}', error: Exception | None = None) -> None:
-        self.text, self.error = text, error
+    def __init__(self, text: str | list[str] = '{"n": 1}', error: Exception | None = None) -> None:
+        self.texts = [text] if isinstance(text, str) else text
+        self.error = error
         self.sent: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> Any:
         self.sent.append(kwargs)
         if self.error is not None:
             raise self.error
-        return litellm().completion(
-            model=kwargs["model"], messages=kwargs["messages"], mock_response=self.text
+        text = self.texts[min(len(self.sent), len(self.texts)) - 1]
+        # LiteLLM takes an empty mock for no mock at all, so an empty reply is emptied after.
+        response = litellm().completion(
+            model=kwargs["model"], messages=kwargs["messages"], mock_response=text or "-"
         )
+        response.choices[0].message.content = text
+        return response
 
 
 def test_every_attempt_is_kept_whole_with_its_labels(conninfo: str) -> None:
@@ -214,11 +225,21 @@ def test_a_request_the_provider_refuses_as_malformed_or_unauthorized_is_rejected
     assert [e.error for e in read_record(conninfo)] == ["rejected"]
 
 
-def test_an_empty_reply_is_not_cached(conninfo: str) -> None:
-    chat = LiteLLMChat(Prices(), completion=Completion(text=""))
-    with pytest.raises(ProviderUnavailable):
-        send(conninfo, chat, Model("openai", "gpt-5.5"))
-    assert [e.error for e in read_record(conninfo)] == ["provider_unavailable"]
+def test_an_empty_reply_is_paid_and_tried_again(conninfo: str) -> None:
+    completion = Completion(text=["", '{"n": 1}'])
+    with (
+        gateway(conninfo, {"chat": LiteLLMChat(Prices(), completion=completion)}) as gw,
+        gw.meter("empty", ceiling_usd=1.0) as m,
+    ):
+        r = m.chat(Model("openai", "gpt-5.5"), user="hello")
+    # LiteLLM's mock reports 10 input and 20 output tokens for each, empty or not.
+    each = 10 * 5e-6 + 20 * 30e-6
+    assert (r.text, r.attempts) == ('{"n": 1}', 2)
+    assert (r.cost_usd, r.first_cost_usd, m.spent_usd) == pytest.approx((2 * each, each, 2 * each))
+    assert [(e.error, e.cost_usd) for e in read_record(conninfo)] == [
+        ("provider_unavailable", pytest.approx(each)),
+        (None, pytest.approx(each)),
+    ]
 
 
 #: Jev's questions, by name, as its API takes them.
@@ -246,20 +267,32 @@ JEV_MODEL = Model("typesafe", "jev-1.14.0")
 
 
 class JevApi:
-    """Plays Jev's HTTP API under TypeSafe's SDK: keeps each request, answers each the same."""
+    """Plays Jev's HTTP API under TypeSafe's SDK: keeps each request, answers each the same.
+
+    With `times`, only the first `times` requests get that answer, and the rest `JEV_BODY`.
+    """
 
     def __init__(
-        self, status: int = 200, body: bytes = JEV_BODY, error: Exception | None = None
+        self,
+        status: int = 200,
+        body: bytes = JEV_BODY,
+        error: Exception | None = None,
+        *,
+        times: int | None = None,
+        retry_after: str = "0",
     ) -> None:
         self.status, self.body, self.error = status, body, error
+        self.times, self.retry_after = times, retry_after
         self.requests: list[httpx2.Request] = []
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
+        # Retry-After 0: were the SDK's own retries on, they would come at once and be counted.
+        headers = {"content-type": "application/json", "retry-after": self.retry_after}
+        if self.times is not None and len(self.requests) > self.times:
+            return httpx2.Response(200, content=JEV_BODY, headers=headers)
         if self.error is not None:
             raise self.error
-        # Retry-After 0: were the SDK's own retries on, they would come at once and be counted.
-        headers = {"content-type": "application/json", "retry-after": "0"}
         return httpx2.Response(self.status, content=self.body, headers=headers)
 
     def jev(self) -> TypeSafeJev:
@@ -310,22 +343,22 @@ def test_jevs_answers_pass_through_untouched_to_the_record_and_back(conninfo: st
 @pytest.mark.parametrize(
     "api",
     [
-        JevApi(529, b'{"error": "overloaded"}'),
-        JevApi(429, b'{"error": "rate limited"}'),
-        JevApi(503, b""),
-        JevApi(error=httpx2.ConnectError("refused")),
+        JevApi(529, b'{"error": "overloaded"}', times=1),
+        JevApi(429, b'{"error": "rate limited"}', times=1),
+        JevApi(503, b"", times=1),
+        JevApi(error=httpx2.ConnectError("refused"), times=1),
         JevApi(
             body=b'{"model": "jev-1.14.0", "answers": {},'
-            b' "usage": {"input_tokens": 9, "output_tokens": 0}}'
+            b' "usage": {"input_tokens": 9, "output_tokens": 0}}',
+            times=1,
         ),
     ],
     ids=["overloaded", "rate-limited", "unavailable", "unreachable", "no-answers"],
 )
-def test_a_jev_failure_is_unavailable_after_one_attempt(conninfo: str, api: JevApi) -> None:
-    with pytest.raises(ProviderUnavailable):
-        ask(conninfo, api.jev())
-    assert len(api.requests) == 1
-    assert [e.error for e in read_record(conninfo)] == ["provider_unavailable"]
+def test_a_jev_failure_is_tried_again_by_the_gateway_alone(conninfo: str, api: JevApi) -> None:
+    r = ask(conninfo, api.jev())
+    assert (r.attempts, len(api.requests)) == (2, 2)  # the SDK tried nothing again itself
+    assert [e.error for e in read_record(conninfo)] == ["provider_unavailable", None]
 
 
 @pytest.mark.parametrize("status", [400, 401, 422])

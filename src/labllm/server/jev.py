@@ -61,7 +61,8 @@ class TypeSafeJev:
             Jev refused the request as malformed or unauthorized, the gateway has no key, or the
             form asks for something Jev does not take.
         ProviderUnavailable
-            Jev failed in any other way, overload and rate limits included, or sent no answers.
+            Jev failed in any other way, overload and rate limits included, or its response
+            lacks its answers or usage. Empty answers are returned, not raised.
         """
         _check(form)
         import typesafe_sdk as ts
@@ -82,9 +83,13 @@ class TypeSafeJev:
             cost = self._prices.tokens_cost(form, usage["input_tokens"], usage["output_tokens"])
         except (KeyError, TypeError) as e:
             raise ProviderUnavailable(f"Jev's response lacks its answers or usage: {e!r}") from e
-        if not answers:
-            raise ProviderUnavailable("Jev sent no answers")
-        return Attempt(output=answers, usage=usage, cost_usd=cost, response=body)
+        return Attempt(
+            output=answers,
+            usage=usage,
+            cost_usd=cost,
+            response=body,
+            input_tokens=usage["input_tokens"],
+        )
 
     def _sdk(self) -> "TypeSafeClient":
         with self._lock:

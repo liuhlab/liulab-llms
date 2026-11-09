@@ -25,8 +25,10 @@ log = logging.getLogger(__name__)
 class ChatReply:
     """A chat call's answer. `text` is unvalidated: the caller decides what it means.
 
-    `cost_usd` is what this call paid, zero on a cache hit; `first_cost_usd` is what the
-    request cost when it was first answered.
+    `cost_usd` is what this call paid, failed attempts included, zero on a cache hit;
+    `first_cost_usd` is what the answer cost when it was first paid. `attempts` counts the
+    requests the gateway sent
+    the provider for this call, retries included: zero on a cache hit.
     """
 
     text: str
@@ -34,6 +36,7 @@ class ChatReply:
     cost_usd: float
     first_cost_usd: float
     cached: bool
+    attempts: int = 1
 
 
 @dataclass(frozen=True)
@@ -41,7 +44,7 @@ class JevReply:
     """A Jev call's answer. `answers` is the JSON exactly as Jev returned it.
 
     From the real gateway it is the ``answers`` object of Jev's response, keyed by question
-    name: a question Jev left unanswered is absent.
+    name: a question Jev left unanswered is absent. The other fields are `ChatReply`'s.
     """
 
     answers: Any
@@ -49,6 +52,7 @@ class JevReply:
     cost_usd: float
     first_cost_usd: float
     cached: bool
+    attempts: int = 1
 
 
 class Transport(Protocol):
@@ -256,7 +260,9 @@ class Meter:
         `tag` joins the call's cost to the caller's own row; it never changes the cache key.
         """
         r = self._call(wire.chat_form(model, user=user, system=system, schema=schema), tag)
-        return ChatReply(r["text"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"])
+        return ChatReply(
+            r["text"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"], r["attempts"]
+        )
 
     def jev(
         self,
@@ -273,7 +279,9 @@ class Meter:
         """
         form = wire.jev_form(model, description=description, questions=questions)
         r = self._call(form, tag)
-        return JevReply(r["answers"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"])
+        return JevReply(
+            r["answers"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"], r["attempts"]
+        )
 
     def _call(self, form: dict[str, Any], tag: str | None) -> dict[str, Any]:
         path = wire.PATHS[form["route"]]
@@ -295,6 +303,8 @@ class Meter:
             raise type(stopped)(str(stopped))
         try:
             cost, first, cached = float(r["cost_usd"]), float(r["first_cost_usd"]), r["cached"]
+            # A gateway older than retries sends no count: one attempt, or none for a hit.
+            r["attempts"] = int(r.get("attempts", 0 if cached else 1))
         except (KeyError, TypeError, ValueError) as e:
             raise GatewayUnreachable(f"the gateway's reply lacks {e}") from e
         with self._lock:

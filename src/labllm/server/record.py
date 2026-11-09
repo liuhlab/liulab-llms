@@ -45,6 +45,8 @@ SCHEMA = (
         WHERE NOT cached AND error IS NULL AND retired_at IS NULL
     """,
     "CREATE INDEX IF NOT EXISTS exchanges_meter ON exchanges (meter)",
+    "ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS attempt integer",
+    "ALTER TABLE exchanges ADD COLUMN IF NOT EXISTS waited_s double precision",
 )
 
 
@@ -59,7 +61,11 @@ class Entry:
 
 @dataclass(frozen=True)
 class Row:
-    """One exchange to add. A hit has `cached` and no bodies; a failure has `error`."""
+    """One exchange to add. A hit has `cached` and no bodies; a failure has `error`.
+
+    `attempt` numbers a call's attempts from 1, and `waited_s` is how long this one waited
+    for its turn or the provider's pause; a hit has neither.
+    """
 
     call: wire.Call
     key: str
@@ -72,6 +78,8 @@ class Row:
     error: str | None = None
     message: str | None = None
     cost_usd: float = 0.0
+    attempt: int | None = None
+    waited_s: float | None = None
 
 
 class Record:
@@ -156,6 +164,8 @@ class Record:
             "person": call.person,
             "repo": call.repo,
             "tag": call.tag,
+            "attempt": row.attempt,
+            "waited_s": row.waited_s,
         }
         with self._pool.connection() as conn:
             conn.execute(_INSERT, values)
@@ -163,7 +173,7 @@ class Record:
 
 _COLUMNS = (
     "key, route, provider, model, cached, form, reply, usage, response, error, message,"
-    " cost_usd, meter, label, ceiling_usd, off_peak_only, person, repo, tag"
+    " cost_usd, meter, label, ceiling_usd, off_peak_only, person, repo, tag, attempt, waited_s"
 )
 _INSERT = (
     "INSERT INTO exchanges (started_at, finished_at, "
@@ -171,7 +181,8 @@ _INSERT = (
     + ") VALUES (to_timestamp(%(started_at)s), to_timestamp(%(finished_at)s),"
     " %(key)s, %(route)s, %(provider)s, %(model)s, %(cached)s, %(form)s, %(reply)s, %(usage)s,"
     " %(response)s, %(error)s, %(message)s, %(cost_usd)s, %(meter)s, %(label)s,"
-    " %(ceiling_usd)s, %(off_peak_only)s, %(person)s, %(repo)s, %(tag)s)"
+    " %(ceiling_usd)s, %(off_peak_only)s, %(person)s, %(repo)s, %(tag)s, %(attempt)s,"
+    " %(waited_s)s)"
 )
 
 

@@ -20,6 +20,10 @@ class Clock(Protocol):
         """Block the calling thread until `now()` reaches `t`, or until `wake` is set."""
         ...
 
+    def wait(self, condition: threading.Condition, until: float | None = None) -> None:
+        """Wait on `condition`, whose lock the caller holds, until notified or `until`."""
+        ...
+
 
 class SystemClock:
     """The real clock."""
@@ -39,3 +43,7 @@ class SystemClock:
                 time.sleep(left)
             elif wake.wait(left):
                 return
+
+    def wait(self, condition: threading.Condition, until: float | None = None) -> None:
+        """Wait on `condition`, whose lock the caller holds, until notified or `until`."""
+        condition.wait(None if until is None else max(0.0, until - time.time()))

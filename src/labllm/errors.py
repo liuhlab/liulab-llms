@@ -24,9 +24,20 @@ class ProviderExhausted(Stopped):
 
 
 class ProviderUnavailable(Stopped):
-    """The provider still failed when the gateway's retry budget ran out."""
+    """The provider still failed when the gateway's retry budget ran out.
+
+    Inside the gateway, a provider raises it for each failure worth another attempt, with the
+    provider's HTTP `status` (None when no response came) and the `retry_after_s` it asked for.
+    """
 
     reason = "provider_unavailable"
+
+    def __init__(
+        self, message: str = "", *, status: int | None = None, retry_after_s: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.retry_after_s = retry_after_s
 
 
 class GatewayUnreachable(Stopped):
