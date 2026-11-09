@@ -9,10 +9,11 @@ A person's reviews live outside the state file, one JSON Lines file per kind, `<
 in the folder the repo names. They survive deleting the state file and go into the repo's git.
 
 **Saving needs no task.** `Reviews(folder).save` never opens the state file, so it works while
-another process holds the task; `Task.save_review` makes the same call. A review is made for
-the inputs `kind.load(key)` returns when it is saved: the answer checks run on those inputs,
-and their tag is the one stamped. A review saved after the inputs changed waits for a pass
-that records the new tag.
+another process holds the task. It stamps the inputs tag of the answer reviewed, which the
+caller passes from the queue entry; `Task.save_review` reads it from the unit's current
+outcome and makes the same call. Both run the answer checks on the inputs `kind.load(key)`
+returns, and refuse the save when their tag differs: the inputs changed since that answer,
+so a pass must run again first. `Held` from `load` refuses it too.
 
 **One write per line.** A save opens the file to append and writes the whole line in one
 `write`, then syncs it, so two processes saving at once on a local disk never split a line.

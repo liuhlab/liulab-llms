@@ -90,6 +90,7 @@ class Reviews:
         key: str,
         *,
         who: str,
+        inputs_tag: str,
         answer: Any = _NO_ANSWER,
         drop: bool = False,
         note: str = "",
@@ -101,16 +102,19 @@ class Reviews:
         Give `answer` or `drop=True`, not both. The answer must fit the kind's answer schema,
         and the kind's answer checks run on it. A failed check stops the save unless
         `overrides` gives a reason for it, by the check's name; the review keeps every check's
-        result. The review is made for the inputs `kind.load(key)` returns now.
+        result.
+
+        `inputs_tag` is the inputs tag of the answer reviewed, as its `QueueEntry` gives it. The
+        checks run on the inputs `kind.load(key)` returns now, which must have that tag.
 
         Raises
         ------
         ChecksFailed
             An answer check failed and is not overridden. Nothing is saved.
         ValueError
-            The answer does not fit the schema, both or neither of `answer` and `drop` are
-            given, a drop has no note, or an override names no answer check or gives no
-            reason.
+            The unit's inputs changed since the answer reviewed, the answer does not fit the
+            schema, both or neither of `answer` and `drop` are given, a drop has no note, or an
+            override names no answer check or gives no reason.
         Held
             The unit's inputs are not there.
         """
@@ -126,6 +130,11 @@ class Reviews:
             if not reason:
                 raise ValueError(f"the override of {name!r} needs a reason")
         inputs = kind.load(key)
+        if inputs.tag != inputs_tag:
+            raise ValueError(
+                f"the inputs of {key!r} changed since the answer reviewed, from {inputs_tag!r} "
+                f"to {inputs.tag!r}: rerun a pass, then review its answer"
+            )
         checks: tuple[CheckResult, ...] = ()
         if not drop:
             answer = json.loads(kind._fit(answer))
@@ -138,7 +147,7 @@ class Reviews:
             who=who,
             when=datetime.fromtimestamp(self._clock.now(), UTC),
             kind_version=kind.version,
-            inputs_tag=inputs.tag,
+            inputs_tag=inputs_tag,
             answer=None if drop else answer,
             drop=drop,
             note=note,

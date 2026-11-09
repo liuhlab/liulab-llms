@@ -133,14 +133,32 @@ def test_a_drop_holds_across_kind_versions_until_the_inputs_tag_changes(task: Ta
     ]
 
 
+def test_a_review_is_refused_once_the_inputs_changed_since_the_answer_reviewed(
+    task: Task, tmp_path: Path
+) -> None:
+    texts = {"c": "one two three"}
+    k = kind(texts, run=refuse_blue, answer_checks=(at_most_two,))
+    run(task, k, ["c"])
+    (entry,) = task.review_queue(k)
+    texts["c"] = "one two"
+    with pytest.raises(ValueError, match="changed since the answer reviewed"):
+        task.save_review(k, "c", who="Ana", answer={"words": ["one", "two"]})
+    with pytest.raises(ValueError, match="changed since the answer reviewed"):
+        Reviews(task.reviews).save(
+            k, "c", who="Ana", answer={"words": ["one", "two"]}, inputs_tag=entry.inputs_tag
+        )
+    assert Reviews(task.reviews).read(k) == []
+
+
 def test_the_newest_review_wins_by_its_time_then_by_its_line(
     task: Task, fake: FakeGateway, tmp_path: Path
 ) -> None:
     run(task, CHECKED, ["b"])
     ana = Reviews(tmp_path / "ana", clock=FakeClock(100.0))
     ben = Reviews(tmp_path / "ben", clock=FakeClock(200.0))
-    ben.save(CHECKED, "b", who="Ben", answer={"words": ["Blue"]})
-    ana.save(CHECKED, "b", who="Ana", answer={"words": ["blue"]})
+    (entry,) = task.review_queue(CHECKED)
+    ben.save(CHECKED, "b", who="Ben", answer={"words": ["Blue"]}, inputs_tag=entry.inputs_tag)
+    ana.save(CHECKED, "b", who="Ana", answer={"words": ["blue"]}, inputs_tag=entry.inputs_tag)
     # What a union merge leaves when Ben merges Ana's branch: his lines, then hers.
     merged = ben.path(CHECKED).read_bytes() + ana.path(CHECKED).read_bytes()
     task.reviews.mkdir()
@@ -167,7 +185,9 @@ def test_a_review_is_saved_while_another_process_holds_the_task(
         assert p.stdout.readline() == "ready\n"
         with pytest.raises(TaskInUse):
             Task(tmp_path / "task", gateway=fake.client(), reviews=tmp_path / "reviews")
-        Reviews(tmp_path / "reviews").save(CHECKED, "b", who="Ana", answer={"words": ["blue"]})
+        Reviews(tmp_path / "reviews").save(
+            CHECKED, "b", who="Ana", answer={"words": ["blue"]}, inputs_tag="text=blue"
+        )
         assert p.stdin is not None
         p.stdin.close()
         assert p.wait() == 0
@@ -202,7 +222,8 @@ reviews, who = Reviews(sys.argv[1]), sys.argv[2]
 print("ready", flush=True)
 sys.stdin.readline()
 for i in range(20):
-    reviews.save(k, f"{who}{i}", who=who, answer={"words": [who * 10] * 2000})
+    key = f"{who}{i}"
+    reviews.save(k, key, who=who, answer={"words": [who * 10] * 2000}, inputs_tag=key)
 """
 
 

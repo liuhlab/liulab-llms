@@ -326,7 +326,8 @@ class QueueEntry:
 
     `ending` is its current ending, unsettled or refused. `outcomes` holds its outcome in every
     pass that ran it, oldest first, each with its answer, stamp and ending. `failed` holds the
-    current answer's failed checks. `spent_usd` is what its calls paid over every pass. `reviews`
+    current answer's failed checks. `inputs_tag` is the current answer's, which a review of it
+    passes to `Reviews.save`. `spent_usd` is what its calls paid over every pass. `reviews`
     holds every review saved for it, oldest first; none holds, since each was made for other
     inputs.
     """
@@ -334,6 +335,7 @@ class QueueEntry:
     kind: str
     key: str
     ending: str
+    inputs_tag: str
     outcomes: tuple[Outcome, ...]
     failed: tuple[CheckResult, ...]
     spent_usd: float
@@ -578,11 +580,24 @@ class Task:
         overrides: Mapping[str, str] | None = None,
         accepted_pass: int | None = None,
     ) -> Review:
-        """Check, stamp and save one person's review of one unit, as `Reviews.save` does."""
+        """Check, stamp and save one person's review of the unit's current answer.
+
+        As `Reviews.save` does, for the inputs tag of the unit's latest pass that reached an
+        ending.
+
+        Raises
+        ------
+        ValueError
+            No pass has reached an ending for the unit, or as `Reviews.save` raises.
+        """
+        outcome = self._state.current(kind.name, key)
+        if outcome is None or outcome.stamp.inputs_tag is None:
+            raise ValueError(f"no pass has reached an ending for {key!r}: there is no answer")
         return self._reviews.save(
             kind,
             key,
             who=who,
+            inputs_tag=outcome.stamp.inputs_tag,
             answer=answer,
             drop=drop,
             note=note,
@@ -625,6 +640,7 @@ class Task:
                     kind=kind.name,
                     key=key,
                     ending=current.ending,
+                    inputs_tag=current.stamp.inputs_tag or "",
                     outcomes=tuple(outcomes),
                     failed=tuple(c for c in current.checks if not c.passed),
                     spent_usd=sum(o.cost.spent_usd for o in outcomes if o.cost is not None),
