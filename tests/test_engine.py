@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,7 +16,21 @@ from typing import Any
 import pytest
 
 import labllm
-from labllm import Held, Inputs, Model, Role, Task, TaskInUse, Unit, UnitKind, UnknownLayout
+from labllm import (
+    CeilingReached,
+    Held,
+    Inputs,
+    Model,
+    ProviderExhausted,
+    ProviderUnavailable,
+    Role,
+    Stopped,
+    Task,
+    TaskInUse,
+    Unit,
+    UnitKind,
+    UnknownLayout,
+)
 from labllm.testing import FakeGateway, Price
 
 WRITER = Model("openai", "test-writer", max_output_tokens=50)
@@ -204,7 +219,7 @@ def test_a_pass_returns_counts_and_its_meters_totals(task: Task) -> None:
 def test_a_pass_runs_units_in_the_order_given_under_one_meter(
     task: Task, fake: FakeGateway
 ) -> None:
-    result = run(task, kind(), ["c", "a", "b"])
+    result = run(task, kind(), ["c", "a", "b"], units_at_once=1)
     assert [(x.tag, x.meter, x.label) for x in fake.record] == [
         ("c", result.meter, "split"),
         ("a", result.meter, "split"),
@@ -272,7 +287,12 @@ def test_the_current_answer_is_from_the_latest_pass_that_reached_an_ending(task:
 
 def test_a_stop_ends_the_remaining_units_unfinished_with_the_reason(task: Task) -> None:
     result = task.run_pass(
-        kind(), ["a", "b", "c"], models={"writer": WRITER}, ceiling_usd=0.06, label="small"
+        kind(),
+        ["a", "b", "c"],
+        models={"writer": WRITER},
+        ceiling_usd=0.06,
+        label="small",
+        units_at_once=1,
     )
     assert result.stopped == "ceiling_reached"
     assert result.counts["settled"] == 1
@@ -304,13 +324,30 @@ def test_a_state_file_of_an_unknown_layout_is_refused(tmp_path: Path, fake: Fake
     with sqlite3.connect(t.path) as db:  # what a newer liulab-llms would leave
         db.execute("PRAGMA user_version = 99")
     db.close()
-    with pytest.raises(UnknownLayout, match="layout 99, newer than layout 1"):
+    with pytest.raises(UnknownLayout, match="layout 99, newer than layout 2"):
         open_task(tmp_path, fake)
     t.path.write_text("not a database")
     with pytest.raises(UnknownLayout, match="not a task's state file"):
         open_task(tmp_path, fake)
     t.path.unlink()
     open_task(tmp_path, fake).close()  # the refusals left nothing holding the task
+
+
+def test_a_state_file_of_an_older_layout_is_upgraded(tmp_path: Path, fake: FakeGateway) -> None:
+    (tmp_path / "task").mkdir()
+    with sqlite3.connect(tmp_path / "task" / "state.sqlite") as db:
+        db.executescript((Path(__file__).parent / "data" / "layout-1.sql").read_text())
+    db.close()
+    with open_task(tmp_path, fake) as t:
+        old = t.current(kind(), "a")
+        run(t, kind(), ["a"])
+        new = t.current(kind(), "a")
+    assert old is not None
+    assert new is not None
+    assert (old.ending, old.answer, old.cost) == ("settled", {"words": ["red", "green"]}, None)
+    assert (new.stamp.pass_id, new.answer) == (2, old.answer)
+    assert new.cost is not None
+    assert new.cost.requests == 1
 
 
 #: Holds a task from another process until stdin closes. A line "pass" makes it try a pass.
@@ -379,3 +416,186 @@ def test_a_holder_that_stopped_beating_is_taken_over_and_loses_its_hold(
         holder.stdin.write("pass\n")
         holder.stdin.flush()
         assert holder.stdout.readline().startswith(f"refused: {tmp_path / 'task'} is now held")
+
+
+#: How long a test waits for threads to meet before it calls the engine broken.
+MEET_S = 10.0
+
+LETTERS = {key: f"word {key}" for key in "abcdefgh"}
+
+
+def test_a_pass_runs_units_at_once_up_to_its_limit(task: Task) -> None:
+    meet = threading.Barrier(4, timeout=MEET_S)
+    lock = threading.Lock()
+    running, most = 0, 0
+
+    def together(u: Unit) -> Any:
+        nonlocal running, most
+        with lock:
+            running += 1
+            most = max(most, running)
+        meet.wait()
+        answer = split(u)
+        with lock:
+            running -= 1
+        return answer
+
+    result = run(task, kind(LETTERS, run=together), list(LETTERS), units_at_once=4)
+    assert result.counts["settled"] == 8
+    assert most == 4
+
+
+def test_each_sends_a_units_requests_at_once_and_keeps_their_order(
+    task: Task, fake: FakeGateway
+) -> None:
+    meet = threading.Barrier(3, timeout=MEET_S)
+
+    def one_word(word: str, u: Unit) -> str:
+        meet.wait()
+        return json.loads(u.chat("writer", user=word, schema=SCHEMA).text)["words"][0]
+
+    def word_by_word(u: Unit) -> Any:
+        return {"words": u.each(lambda w: one_word(w, u), u.inputs.data.split(), at_once=3)}
+
+    run(task, kind(run=word_by_word), ["c"])
+    c = task.current(kind(), "c")
+    assert c is not None
+    assert (c.ending, c.answer) == ("settled", {"words": ["one", "two", "three"]})
+    assert [x.tag for x in fake.record] == ["c", "c", "c"]
+
+
+def test_settle_and_refuse_inside_each_end_the_unit(task: Task) -> None:
+    def decide(word: str, u: Unit) -> None:
+        if word == "blue":
+            u.settle({"words": ["blue"]})
+        if word == "two":
+            u.refuse("no_two", "two is not a word here")
+
+    def word_by_word(u: Unit) -> Any:
+        u.each(lambda w: decide(w, u), u.inputs.data.split())
+        return {"words": []}
+
+    k = kind(run=word_by_word)
+    result = run(task, k, ["a", "b", "c"])
+    assert result.counts == {"settled": 2, "unsettled": 0, "refused": 1, "unfinished": 0, "held": 0}
+    b, c = task.current(k, "b"), task.current(k, "c")
+    assert b is not None
+    assert c is not None
+    assert (b.ending, b.answer) == ("settled", {"words": ["blue"]})
+    assert (c.ending, c.reason) == ("refused", "two is not a word here")
+
+
+def _gateway_goes(fake: FakeGateway) -> None:
+    fake.refuse_connections()
+    raise ConnectionResetError("the gateway went away mid-call")
+
+
+def _raises(error: type[Stopped]) -> Any:
+    def trigger(fake: FakeGateway) -> None:
+        raise error("the provider says no")
+
+    return trigger
+
+
+STOPS = {
+    "ceiling_reached": _raises(CeilingReached),
+    "provider_exhausted": _raises(ProviderExhausted),
+    "provider_unavailable": _raises(ProviderUnavailable),
+    "gateway_unreachable": _gateway_goes,
+}
+
+
+@pytest.mark.parametrize("reason", sorted(STOPS))
+def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
+    tmp_path: Path, reason: str
+) -> None:
+    meet = threading.Barrier(3, timeout=MEET_S)
+    stopped = threading.Event()
+
+    def provider(form: dict[str, Any]) -> str:
+        text = form["messages"][-1]["content"]
+        if text in ("word a", "word b", "word c"):
+            meet.wait()
+        if text == "word c":
+            STOPS[reason](fake)
+        if text in ("word a", "word b"):
+            assert stopped.wait(MEET_S)
+        return split_words(form)
+
+    def in_flight(u: Unit) -> Any:
+        try:
+            answer = split(u)
+        except Stopped:
+            stopped.set()
+            raise
+        if u.key == "a":
+            try:
+                u.chat("writer", user="a second call")
+            except Stopped:
+                return answer  # its code swallows the stop
+        return answer
+
+    fake = FakeGateway(provider, prices=PRICES)
+    with open_task(tmp_path, fake) as t:
+        k = kind(LETTERS, run=in_flight)
+        result = run(t, k, list("abcdef"), units_at_once=3)
+        outcomes = {key: t.outcomes(k, key) for key in "abcdef"}
+    assert result.stopped == reason
+    assert result.counts == {"settled": 1, "unsettled": 0, "refused": 0, "unfinished": 5, "held": 0}
+    assert {key: [o.ending for o in os] for key, os in outcomes.items()} == {
+        "a": ["unfinished"],
+        "b": ["settled"],
+        "c": ["unfinished"],
+        "d": ["unfinished"],
+        "e": ["unfinished"],
+        "f": ["unfinished"],
+    }
+    assert reason in (outcomes["c"][0].reason or "")
+    for key in "adef":
+        assert outcomes[key][0].reason == f"the pass stopped: {reason}"
+    assert sorted(x.tag or "" for x in fake.record if x.error is None) == ["a", "b"]
+    assert {x.tag for x in fake.record} <= {"a", "b", "c"}
+    # '{"words": ["word", "a"]}' is 24 output tokens at 0.001 each, and so is b's.
+    assert result.spent_usd == pytest.approx(0.048)
+
+
+def test_rerunning_a_stopped_pass_resumes_it(task: Task) -> None:
+    keys = ["a", "b", "c"]
+    first = task.run_pass(
+        kind(), keys, models={"writer": WRITER}, ceiling_usd=0.06, label="x", units_at_once=1
+    )
+    assert (first.stopped, first.counts["settled"]) == ("ceiling_reached", 1)
+    again = run(task, kind(), keys)
+    assert again.stopped is None
+    assert again.counts["settled"] == 3
+    assert (again.requests, again.cache_hits) == (3, 1)
+    # a replays free; b's 19-character reply and c's 34 are paid now.
+    assert again.spent_usd == pytest.approx(0.019 + 0.034)
+    assert again.first_cost_usd == pytest.approx(0.027 + 0.019 + 0.034)
+
+
+def test_each_unit_records_its_cost_and_time_per_pass(tmp_path: Path) -> None:
+    def two_seconds(form: dict[str, Any]) -> str:
+        fake.clock.sleep(2.0)
+        return split_words(form)
+
+    def twice(u: Unit) -> Any:
+        answer = split(u)
+        u.chat("writer", user=u.inputs.data.upper())
+        return answer
+
+    fake = FakeGateway(two_seconds, prices=PRICES)
+    with open_task(tmp_path, fake) as t:
+        k = kind(run=twice)
+        run(t, k, ["b"])
+        run(t, k, ["b"])
+        paid, replayed = (o.cost for o in t.outcomes(k, "b"))
+    assert paid is not None
+    assert replayed is not None
+    # Two replies of 19 characters, '{"words": ["blue"]}' and its capitals, from 4-letter inputs.
+    assert (paid.spent_usd, paid.first_cost_usd) == pytest.approx((0.038, 0.038))
+    assert (paid.requests, paid.cache_hits, paid.seconds) == (2, 0, 4.0)
+    assert paid.usage == {"input_tokens": 8, "output_tokens": 38}
+    assert (replayed.spent_usd, replayed.first_cost_usd) == pytest.approx((0.0, 0.038))
+    assert (replayed.requests, replayed.cache_hits, replayed.seconds) == (2, 2, 0.0)
+    assert replayed.usage == paid.usage

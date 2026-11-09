@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,14 @@ _UPGRADES: tuple[str, ...] = (
         PRIMARY KEY (kind, key, pass_id, seq),
         FOREIGN KEY (kind, key, pass_id) REFERENCES outcomes
     );
+    """,
+    """
+    ALTER TABLE outcomes ADD COLUMN spent_usd REAL;
+    ALTER TABLE outcomes ADD COLUMN first_cost_usd REAL;
+    ALTER TABLE outcomes ADD COLUMN requests INTEGER;
+    ALTER TABLE outcomes ADD COLUMN cache_hits INTEGER;
+    ALTER TABLE outcomes ADD COLUMN usage TEXT;
+    ALTER TABLE outcomes ADD COLUMN seconds REAL;
     """,
 )
 
@@ -241,11 +249,31 @@ class Stamp:
 
 
 @dataclass(frozen=True)
+class UnitCost:
+    """What one unit's calls cost in one pass, and how long the unit took.
+
+    `spent_usd` is what its calls paid now, zero for a cache replay; `first_cost_usd` is what
+    the same replies cost when first paid. `requests` counts every call the unit sent,
+    answered or not, and `cache_hits` those the cache answered. `usage` sums the numbers in
+    the replies' usage, key by key, replays included. `seconds` runs on the gateway client's
+    clock from the unit's first request to its ending; None if it sent none.
+    """
+
+    spent_usd: float = 0.0
+    first_cost_usd: float = 0.0
+    requests: int = 0
+    cache_hits: int = 0
+    usage: dict[str, Any] = field(default_factory=dict[str, Any])
+    seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class Outcome:
     """How one unit came out of one pass.
 
     `ending` is one of `ENDINGS` or `NOT_ENDINGS`. `answer` is None unless the unit ended
-    settled or unsettled. `reason` says why it was refused, unfinished or held.
+    settled or unsettled. `reason` says why it was refused, unfinished or held. `cost` is None
+    for an outcome recorded by a liulab-llms that kept no cost per unit.
     """
 
     key: str
@@ -254,6 +282,7 @@ class Outcome:
     reason: str | None
     checks: tuple[CheckResult, ...]
     stamp: Stamp
+    cost: UnitCost | None
 
 
 @dataclass(frozen=True)
@@ -387,16 +416,42 @@ class StateFile:
         answer_json: str | None,
         reason: str | None,
         checks: Sequence[CheckResult],
+        cost: UnitCost,
     ) -> None:
-        """Record one unit's outcome in one pass and its checks, all at once."""
+        """Record one unit's outcome in one pass, its checks and its cost, all at once."""
         with self._write() as conn:
             conn.execute(
-                "INSERT INTO outcomes VALUES (?,?,?,?,?,?,?)",
-                (kind, key, pass_id, ending, inputs_tag, answer_json, reason),
+                f"INSERT INTO outcomes ({_OUTCOME_FIELDS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    kind,
+                    key,
+                    pass_id,
+                    ending,
+                    inputs_tag,
+                    answer_json,
+                    reason,
+                    cost.spent_usd,
+                    cost.first_cost_usd,
+                    cost.requests,
+                    cost.cache_hits,
+                    json.dumps(cost.usage),
+                    cost.seconds,
+                ),
             )
             conn.executemany(
                 "INSERT INTO checks VALUES (?,?,?,?,?,?)",
                 [(kind, key, pass_id, i, c.name, c.message) for i, c in enumerate(checks)],
+            )
+
+    def record_unstarted(
+        self, kind: str, keys: Sequence[str], pass_id: int, *, reason: str
+    ) -> None:
+        """Record units a pass never started as unfinished for `reason`, all at once."""
+        with self._write() as conn:
+            conn.executemany(
+                f"INSERT INTO outcomes ({_OUTCOME_FIELDS}) "
+                "VALUES (?, ?, ?, 'unfinished', NULL, NULL, ?, 0, 0, 0, 0, '{}', NULL)",
+                [(kind, key, pass_id, reason) for key in keys],
             )
 
     def outcomes(self, kind: str, key: str) -> list[Outcome]:
@@ -436,7 +491,8 @@ class StateFile:
 
     def _outcome(self, row: tuple[Any, ...]) -> Outcome:
         (kind, key, pass_id, ending, inputs_tag, answer, reason) = row[:7]
-        (meter, kind_version, models, repo_version, labllm_version) = row[7:]
+        (spent, first, requests, cache_hits, usage, seconds) = row[7:13]
+        (meter, kind_version, models, repo_version, labllm_version) = row[13:]
         checks = self._conn.execute(
             "SELECT name, message FROM checks WHERE kind=? AND key=? AND pass_id=? ORDER BY seq",
             (kind, key, pass_id),
@@ -458,11 +514,19 @@ class StateFile:
             reason=reason,
             checks=tuple(CheckResult(name, message) for name, message in checks),
             stamp=stamp,
+            cost=None
+            if usage is None
+            else UnitCost(spent, first, requests, cache_hits, json.loads(usage), seconds),
         )
 
 
+_OUTCOME_FIELDS = (
+    "kind, key, pass_id, ending, inputs_tag, answer, reason, "
+    "spent_usd, first_cost_usd, requests, cache_hits, usage, seconds"
+)
 _OUTCOME_COLUMNS = (
     "o.kind, o.key, o.pass_id, o.ending, o.inputs_tag, o.answer, o.reason, "
+    "o.spent_usd, o.first_cost_usd, o.requests, o.cache_hits, o.usage, o.seconds, "
     "p.meter, p.kind_version, p.models, p.repo_version, p.labllm_version"
 )
 _ENDED = "('settled', 'unsettled', 'refused', 'dropped')"
