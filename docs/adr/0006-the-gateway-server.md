@@ -9,10 +9,10 @@ search:
 
 **LiteLLM 1.106.6, from PyPI.** The pin is a final release, at least a week old, that no
 advisory names. It moves only for a model or fix the gateway needs, or an advisory against
-it. conda-forge's 1.106.0 builds from source, but a proxy advisory names it, and a rule
-without exceptions is easier to keep. The
-cost: a wheel BerriAI compiled, with no provenance. A move re-checks, at the new tag, the
-points in [the call layer's research resolution](https://github.com/liuhlab/liulab-llms/issues/2).
+it. conda-forge's 1.106.0 builds from source, but an advisory about LiteLLM's proxy names
+it, and a rule without exceptions is easier to keep. The cost: a wheel BerriAI compiled,
+with no provenance. A move re-checks, at the new tag, the points in
+[the call layer's research resolution](https://github.com/liuhlab/liulab-llms/issues/2).
 
 **The standard library's `ThreadingHTTPServer`.** No package to pin, and a thread per call
 suits blocking calls that wait at the gateway. The cost: no defence against slow or
