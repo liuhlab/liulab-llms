@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Run a PostgreSQL tool from the gateway's environment, as labllm, against the gateway's
+# database. Run as root:
+#
+#   sudo labllm-db psql -c 'SELECT count(*) FROM exchanges'
+set -euo pipefail
+tool=${1:?name a PostgreSQL tool, such as psql or pg_restore}
+shift
+exec runuser -u labllm -- env HOME=/opt/labllm PGHOST=/run/labllm-postgres PGDATABASE=labllm \
+    "/opt/labllm/liulab-llms/.pixi/envs/gateway/bin/$tool" "$@"

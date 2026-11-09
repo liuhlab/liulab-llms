@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Dump the gateway's database to $BACKUP_BUCKET. Run as root by labllm-dump.service.
+# The upload is GCP's `gcloud storage`; another cloud swaps that one line.
+set -euo pipefail
+: "${BACKUP_BUCKET:?set BACKUP_BUCKET in /etc/labllm/backup.env}"
+name="labllm-$(date -u +%Y%m%dT%H%M%SZ).dump"
+labllm-db pg_dump --format=custom labllm | gcloud storage cp --quiet - "$BACKUP_BUCKET/$name"
+echo "dumped to $BACKUP_BUCKET/$name"

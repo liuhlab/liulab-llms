@@ -1,0 +1,23 @@
+[Unit]
+Description=The lab gateway, on loopback port 8000
+Requires=labllm-postgres.service
+After=labllm-postgres.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=labllm
+Group=labllm
+# Root-only, on the boot disk. A missing file fails the start, so the gap shows.
+EnvironmentFile=/etc/labllm/keys.env
+WorkingDirectory=/opt/labllm/liulab-llms
+ExecStartPre=/opt/labllm/liulab-llms/.pixi/envs/gateway/bin/pg_isready -q -h /run/labllm-postgres -t 60
+ExecStart=/opt/labllm/liulab-llms/.pixi/envs/gateway/bin/python -m labllm.server \
+    --settings /etc/labllm/settings.toml --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

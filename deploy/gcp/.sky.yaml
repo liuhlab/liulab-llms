@@ -1,0 +1,5 @@
+# SkyPilot settings for launches from this folder. GCP takes one remote identity for every
+# cluster, so it lives here and not in ~/.sky/config.yaml: the VM gets SkyPilot's own service
+# account, and no personal gcloud login is copied to it.
+gcp:
+  remote_identity: SERVICE_ACCOUNT

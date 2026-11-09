@@ -1,0 +1,20 @@
+[Unit]
+Description=PostgreSQL for the lab gateway, data on the data disk
+RequiresMountsFor=/mnt/data
+ConditionPathExists=/mnt/data/pgdata/PG_VERSION
+
+[Service]
+User=labllm
+Group=labllm
+RuntimeDirectory=labllm-postgres
+ExecStart=/opt/labllm/liulab-llms/.pixi/envs/gateway/bin/postgres -D /mnt/data/pgdata \
+    -c listen_addresses= -c unix_socket_directories=/run/labllm-postgres
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
