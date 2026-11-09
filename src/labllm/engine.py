@@ -1,6 +1,7 @@
 """The engine: a repo's unit kinds, and passes that run them over many units."""
 
 import copy
+import dataclasses
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ from labllm.client import ChatReply, Gateway, JevReply, Meter
 from labllm.clock import Clock
 from labllm.errors import Stopped
 from labllm.model import Model
+from labllm.reviews import _NO_ANSWER, Review, Reviews, _holding
 from labllm.state import (
     ENDINGS,
     NOT_ENDINGS,
@@ -305,6 +307,26 @@ class _Ended:
     cost: UnitCost = field(default_factory=UnitCost)
 
 
+@dataclass(frozen=True)
+class QueueEntry:
+    """One unit in the review queue, with what a person needs to review it.
+
+    `ending` is its current ending, unsettled or refused. `outcomes` holds its outcome in every
+    pass that ran it, oldest first, each with its answer, stamp and ending. `failed` holds the
+    current answer's failed checks. `spent_usd` is what its calls paid over every pass. `reviews`
+    holds every review saved for it, oldest first; none holds, since each was made for other
+    inputs.
+    """
+
+    kind: str
+    key: str
+    ending: str
+    outcomes: tuple[Outcome, ...]
+    failed: tuple[CheckResult, ...]
+    spent_usd: float
+    reviews: tuple[Review, ...]
+
+
 class Task:
     """One task's state, kept in one SQLite file in `folder`, and the passes run on it.
 
@@ -337,6 +359,7 @@ class Task:
         self.folder.mkdir(parents=True, exist_ok=True)
         self.path = self.folder / "state.sqlite"
         self._gateway = gateway
+        self._reviews = Reviews(self.reviews, clock=gateway.clock)
         self._state = StateFile(self.path)
 
     def close(self) -> None:
@@ -507,9 +530,48 @@ class Task:
     def current(self, kind: UnitKind, key: str) -> Outcome | None:
         """Return the unit's current answer: its outcome in the latest pass that reached an ending.
 
-        None if no pass has reached an ending for it. Unfinished and held change nothing.
+        A person's review outranks it while that outcome's inputs tag is the one the review
+        was made for; of such reviews, the newest wins. None if no pass has reached an ending
+        for the unit. Unfinished and held change nothing.
         """
-        return self._state.current(kind.name, key)
+        outcome = self._state.current(kind.name, key)
+        if outcome is None:
+            return None
+        review = _holding(self._reviews._by_key(kind).get(key, ()), outcome.stamp.inputs_tag)
+        if review is None:
+            return outcome
+        return dataclasses.replace(
+            outcome,
+            ending=review.ending,
+            answer=review.answer,
+            checks=review.checks,
+            reason=review.note if review.drop else None,
+            review=review,
+        )
+
+    def save_review(
+        self,
+        kind: UnitKind,
+        key: str,
+        *,
+        who: str,
+        answer: Any = _NO_ANSWER,
+        drop: bool = False,
+        note: str = "",
+        overrides: Mapping[str, str] | None = None,
+        accepted_pass: int | None = None,
+    ) -> Review:
+        """Check, stamp and save one person's review of one unit, as `Reviews.save` does."""
+        return self._reviews.save(
+            kind,
+            key,
+            who=who,
+            answer=answer,
+            drop=drop,
+            note=note,
+            overrides=overrides,
+            accepted_pass=accepted_pass,
+        )
 
     def outcomes(self, kind: UnitKind, key: str) -> list[Outcome]:
         """Return the unit's outcome in every pass that ran it, oldest first."""
@@ -523,10 +585,36 @@ class Task:
         ValueError
             One of `endings` is not an ending.
         """
-        endings = list(endings)
-        if unknown := set(endings) - set(ENDINGS):
+        wanted = set(endings)
+        if unknown := wanted - set(ENDINGS):
             raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
-        return self._state.keys(kind.name, endings)
+        reviews = self._reviews._by_key(kind)
+        keys = []
+        for key, ending, tag in self._state.latest(kind.name):
+            review = _holding(reviews.get(key, ()), tag)
+            if (ending if review is None else review.ending) in wanted:
+                keys.append(key)
+        return keys
+
+    def review_queue(self, kind: UnitKind) -> list[QueueEntry]:
+        """Return every unit whose current answer is unsettled or refused, in key order."""
+        reviews = self._reviews._by_key(kind)
+        queue = []
+        for key in self.keys(kind, endings=("unsettled", "refused")):
+            outcomes = self._state.outcomes(kind.name, key)
+            current = next(o for o in reversed(outcomes) if o.ending in ENDINGS)
+            queue.append(
+                QueueEntry(
+                    kind=kind.name,
+                    key=key,
+                    ending=current.ending,
+                    outcomes=tuple(outcomes),
+                    failed=tuple(c for c in current.checks if not c.passed),
+                    spent_usd=sum(o.cost.spent_usd for o in outcomes if o.cost is not None),
+                    reviews=reviews.get(key, ()),
+                )
+            )
+        return queue
 
 
 def _add_usage(total: dict[str, Any], usage: Mapping[str, Any]) -> None:

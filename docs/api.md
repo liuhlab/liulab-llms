@@ -64,6 +64,16 @@ Two things about that marker are easy to get backwards:
 
 ::: labllm.state.UnknownLayout
 
+## Reviews
+
+::: labllm.engine.QueueEntry
+
+::: labllm.reviews.Reviews
+
+::: labllm.reviews.Review
+
+::: labllm.reviews.ChecksFailed
+
 ## Errors
 
 ::: labllm.errors

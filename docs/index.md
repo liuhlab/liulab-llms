@@ -46,6 +46,21 @@ that plays the provider, and it keeps the same cache and ceiling, offline and fr
 
 The [API reference](api.md) has the full list, built from the docstrings in `src/`.
 
+## Keep reviews in git
+
+When a person reviews a unit, `task.save_review` adds one line to a file for that kind of
+unit, in the reviews folder your repo names. Commit that folder. A review outranks the
+models' answer until the unit's inputs change.
+
+Two people may add reviews on two branches at once. Tell git to keep both sides' lines when
+it merges, by adding this line to your repo's `.gitattributes`, with your folder's path:
+
+```text
+reviews/*.jsonl merge=union
+```
+
+When two lines review the same unit, the one saved later wins.
+
 ## Check your work
 
 One command runs the linters, the type checker and the tests:

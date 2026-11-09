@@ -11,6 +11,13 @@ largest possible cost (estimated input plus the full output allowance), added to
 meter has spent and holds for calls in flight, would cross it. A cache hit never counts.
 _Avoid_: budget, cap, limit
 
+### Dropped
+
+An ending a person's review gives: the unit is taken out of the work, with a note giving the
+reason. No answer is kept. Like an answer from a review, it holds until the unit's inputs tag
+changes.
+_Avoid_: skipped, excluded
+
 ### Exchange
 
 One attempt at a provider, retries each their own, recorded whole in the gateway's record:
@@ -69,10 +76,23 @@ settings, the messages or Jev's description and questions, and the output schema
 is the cache key; labels, the tag and the ceiling are never in it.
 _Avoid_: payload, prompt
 
+### Review
+
+One person's recorded decision on one unit: an answer, or a drop. It is a line in its kind's
+review file, made for the unit's inputs tag of that moment, and outranks the models' answer
+while the tag is unchanged. Of a unit's reviews for one tag, the latest-timed wins.
+_Avoid_: correction, label, annotation
+
+### Review queue
+
+Every unit whose current answer is unsettled or refused, in key order: the units a person
+must look at.
+_Avoid_: inbox, backlog, triage list
+
 ### Settled
 
-An ending: the kind returned an answer and every check passed, or its code alone settled the
-unit.
+An ending: the kind returned an answer and every check passed, or a person overrode a failed
+check with a reason, or its code alone settled the unit.
 _Avoid_: done, accepted
 
 ### Stamp

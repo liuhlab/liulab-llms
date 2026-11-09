@@ -9,13 +9,16 @@ import socket
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from labllm.model import Model
+
+if TYPE_CHECKING:
+    from labllm.reviews import Review
 
 #: What a unit's outcome in one pass can be. The first four are endings; the last two are not.
 ENDINGS = ("settled", "unsettled", "refused", "dropped")
@@ -272,8 +275,12 @@ class Outcome:
     """How one unit came out of one pass.
 
     `ending` is one of `ENDINGS` or `NOT_ENDINGS`. `answer` is None unless the unit ended
-    settled or unsettled. `reason` says why it was refused, unfinished or held. `cost` is None
-    for an outcome recorded by a liulab-llms that kept no cost per unit.
+    settled or unsettled. `reason` says why it was refused, unfinished, held or dropped.
+    `cost` is None for an outcome recorded by a liulab-llms that kept no cost per unit.
+
+    `review` is set only on a current answer that a person's review gives. Then `ending`,
+    `answer`, `checks` and `reason` are the review's, and `stamp` and `cost` are those of
+    the pass it outranks.
     """
 
     key: str
@@ -283,6 +290,7 @@ class Outcome:
     checks: tuple[CheckResult, ...]
     stamp: Stamp
     cost: UnitCost | None
+    review: "Review | None" = None
 
 
 @dataclass(frozen=True)
@@ -475,19 +483,17 @@ class StateFile:
             ).fetchone()
             return None if row is None else self._outcome(row)
 
-    def keys(self, kind: str, endings: Iterable[str]) -> list[str]:
-        """Return the keys whose current ending is one of `endings`, in key order."""
-        wanted = sorted(set(endings))
+    def latest(self, kind: str) -> list[tuple[str, str, str | None]]:
+        """Return each unit's key, ending and inputs tag in its latest ended pass, by key."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT key FROM outcomes o "
-                f"WHERE kind=? AND ending IN ({','.join('?' * len(wanted))}) AND pass_id = ("
+            return self._conn.execute(
+                "SELECT key, ending, inputs_tag FROM outcomes o "
+                "WHERE kind=? AND pass_id = ("
                 "  SELECT max(pass_id) FROM outcomes"
                 f"  WHERE kind=o.kind AND key=o.key AND ending IN {_ENDED}"
                 ") ORDER BY key",
-                (kind, *wanted),
+                (kind,),
             ).fetchall()
-        return [key for (key,) in rows]
 
     def _outcome(self, row: tuple[Any, ...]) -> Outcome:
         (kind, key, pass_id, ending, inputs_tag, answer, reason) = row[:7]

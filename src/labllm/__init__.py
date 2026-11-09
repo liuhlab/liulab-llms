@@ -3,7 +3,7 @@
 from importlib.metadata import version
 
 from labllm.client import ChatReply, Gateway, JevReply, Meter
-from labllm.engine import Held, Inputs, PassResult, Role, Task, Unit, UnitKind
+from labllm.engine import Held, Inputs, PassResult, QueueEntry, Role, Task, Unit, UnitKind
 from labllm.errors import (
     CeilingReached,
     GatewayUnreachable,
@@ -13,6 +13,7 @@ from labllm.errors import (
     Stopped,
 )
 from labllm.model import Model
+from labllm.reviews import ChecksFailed, Review, Reviews
 from labllm.state import CheckResult, Outcome, Stamp, TaskInUse, UnitCost, UnknownLayout
 
 #: Read from the installed distribution's metadata, which hatch-vcs fills from the newest
@@ -23,6 +24,7 @@ __all__ = [
     "CeilingReached",
     "ChatReply",
     "CheckResult",
+    "ChecksFailed",
     "Gateway",
     "GatewayUnreachable",
     "Held",
@@ -34,7 +36,10 @@ __all__ = [
     "PassResult",
     "ProviderExhausted",
     "ProviderUnavailable",
+    "QueueEntry",
     "Rejected",
+    "Review",
+    "Reviews",
     "Role",
     "Stamp",
     "Stopped",
