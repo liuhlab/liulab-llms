@@ -27,8 +27,9 @@ cost is the test's word.
 
 **One table, `exchanges`, holds the record.** Bodies are `json`, not `jsonb`, so a form
 keeps its key order. The cache entry is a key's first successful row not retired, found
-through a partial index with no unique constraint: two identical calls in flight both pay
-and both are kept. An admin retires a key with
+through a partial index. A call that misses the cache claims its key in memory; an identical
+call waits for the claim, then reads the cache again, so a request is paid once. The cost: it
+waits through the first call's retries. An admin retires a key with
 `UPDATE exchanges SET retired_at = now() WHERE key = '…' AND retired_at IS NULL`. A meter's
 spend is summed from its rows the first time the server sees it after a start.
 
