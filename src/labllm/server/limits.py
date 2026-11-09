@@ -85,11 +85,13 @@ class Gate:
         self._turns = threading.Condition()
         self._queue: list[int] = []
         self._in_flight = 0
-        self._requests = None if limit.requests_per_second is None else _Bucket(
-            limit.requests_per_second, now
+        self._requests = (
+            None if limit.requests_per_second is None else _Bucket(limit.requests_per_second, now)
         )
-        self._tokens = None if limit.input_tokens_per_second is None else _Bucket(
-            limit.input_tokens_per_second, now
+        self._tokens = (
+            None
+            if limit.input_tokens_per_second is None
+            else _Bucket(limit.input_tokens_per_second, now)
         )
 
     def wait(self, arrival: int, tokens: int) -> "Turn":

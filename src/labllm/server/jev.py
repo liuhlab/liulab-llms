@@ -4,8 +4,8 @@ import json
 import threading
 from typing import TYPE_CHECKING, Any
 
-from labllm.errors import ProviderUnavailable, Rejected
-from labllm.server.app import Attempt
+from labllm.errors import ProviderExhausted, ProviderUnavailable, Rejected
+from labllm.server.app import Attempt, retry_after_s
 from labllm.server.prices import Prices
 
 if TYPE_CHECKING:
@@ -57,6 +57,8 @@ class TypeSafeJev:
 
         Raises
         ------
+        ProviderExhausted
+            Jev answered 402: its prepaid balance is used up.
         Rejected
             Jev refused the request as malformed or unauthorized, the gateway has no key, or the
             form asks for something Jev does not take.
@@ -73,7 +75,14 @@ class TypeSafeJev:
             )
         except tuple(getattr(ts, name) for name in _REFUSALS) as e:
             raise Rejected(f"Jev refused the request: {e}") from e
-        except (ts.TypeSafeAPIError, ts.TypeSafeAPIConnectionError) as e:
+        except ts.TypeSafeAPIError as e:
+            if e.status == 402:
+                raise ProviderExhausted(f"Jev says its balance is used up: {e}") from e
+            wait = retry_after_s(e.headers)
+            raise ProviderUnavailable(
+                f"Jev failed: {e}", status=e.status, retry_after_s=wait
+            ) from e
+        except ts.TypeSafeAPIConnectionError as e:
             raise ProviderUnavailable(f"Jev failed: {e}") from e
         except ts.TypeSafeError as e:
             raise Rejected(f"TypeSafe's client refused the request: {e}") from e

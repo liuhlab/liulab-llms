@@ -222,6 +222,7 @@ class Unit:
             self._spent += reply.cost_usd
             self._first_cost += reply.first_cost_usd
             self._cache_hits += bool(reply.cached)
+            self._requests += max(reply.attempts - 1, 0)  # the gateway's retries
             if isinstance(reply.usage, Mapping):
                 _add_usage(self._usage, reply.usage)
         return reply

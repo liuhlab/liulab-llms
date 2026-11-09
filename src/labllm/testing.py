@@ -229,17 +229,17 @@ class FakeGateway:
                 + output_tokens * price.output_usd_per_token
             )
             reply = {field: out, "usage": usage, "first_cost_usd": cost}
+            empty = None if out else ProviderUnavailable("the provider sent an empty reply")
             with self._lock:
                 self._reserved[meter] -= reserve
                 self._spent[meter] += cost
-                if not out:
-                    paid += cost
-                    empty = ProviderUnavailable("the provider sent an empty reply")
+                if empty is not None:
                     self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
                 else:
                     self._cache.setdefault(key, reply)
                     self._log(call, key, form=form, reply=reply, cost_usd=cost)
-            if not out:
+            if empty is not None:
+                paid += cost
                 self.clock.sleep_until(retries.again(empty))
                 continue
             return {

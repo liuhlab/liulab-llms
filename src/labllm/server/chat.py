@@ -1,10 +1,11 @@
 """The real chat provider: one attempt through LiteLLM, with each provider's settings."""
 
 from collections.abc import Callable
+from types import ModuleType
 from typing import Any
 
-from labllm.errors import ProviderUnavailable, Rejected
-from labllm.server.app import Attempt
+from labllm.errors import ProviderExhausted, ProviderUnavailable, Rejected
+from labllm.server.app import Attempt, retry_after_s
 from labllm.server.prices import Prices, litellm
 
 #: LiteLLM's errors for a request the provider calls malformed or unauthorized.
@@ -15,6 +16,13 @@ _REFUSALS = (
     "NotFoundError",
     "UnprocessableEntityError",
 )
+
+#: How each provider's error body says a balance or cap is used up, besides a 402 status.
+#: OpenAI answers 429 for a used-up quota; Anthropic has answered 400 for a used-up credit.
+_USED_UP = {
+    "openai": ("insufficient_quota",),
+    "anthropic": ("credit balance is too low", "reached your specified api usage limits"),
+}
 
 
 class LiteLLMChat:
@@ -37,6 +45,8 @@ class LiteLLMChat:
 
         Raises
         ------
+        ProviderExhausted
+            The provider says its balance or cap is used up.
         Rejected
             The provider refused the request as malformed or unauthorized, or the form asks
             for a setting its provider does not take.
@@ -49,10 +59,8 @@ class LiteLLMChat:
         completion = self._completion or ll.completion
         try:
             response = completion(**request(form))
-        except tuple(getattr(ll, name) for name in _REFUSALS) as e:
-            raise Rejected(f"{form['provider']} refused the request: {e}") from e
         except openai.APIError as e:
-            raise ProviderUnavailable(f"{form['provider']} failed: {e}") from e
+            raise _failure(ll, form["provider"], e) from e
         return Attempt(
             output=response.choices[0].message.content or "",
             usage=response.usage.model_dump(mode="json", exclude_none=True),
@@ -60,6 +68,19 @@ class LiteLLMChat:
             response=response.model_dump(mode="json"),
             input_tokens=response.usage.prompt_tokens,
         )
+
+
+def _failure(ll: ModuleType, provider: str, e: Exception) -> Exception:
+    status = getattr(e, "status_code", None)
+    said = f"{e} {getattr(e, 'body', '')}".lower()
+    if status == 402 or any(words in said for words in _USED_UP.get(provider, ())):
+        return ProviderExhausted(f"{provider} says its balance or cap is used up: {e}")
+    if isinstance(e, tuple(getattr(ll, name) for name in _REFUSALS)):
+        return Rejected(f"{provider} refused the request: {e}")
+    headers = getattr(e, "litellm_response_headers", None)
+    return ProviderUnavailable(
+        f"{provider} failed: {e}", status=status, retry_after_s=retry_after_s(headers)
+    )
 
 
 def request(form: dict[str, Any]) -> dict[str, Any]:

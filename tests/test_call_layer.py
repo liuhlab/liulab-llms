@@ -1,6 +1,7 @@
 """The shared call-layer suite: every test here runs against every gateway in `HARNESSES`."""
 
 import dataclasses
+import itertools
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -237,12 +238,14 @@ def test_a_provider_still_unavailable_when_the_retry_budget_ends_stops_the_calle
 
     harness.provider(down)
     start = harness.clock.now()
-    with harness.client().meter("down", ceiling_usd=0.1) as m:
-        with pytest.raises(ProviderUnavailable, match="the provider is down"):
-            m.chat(CHAT, user="hello")
+    with (
+        harness.client().meter("down", ceiling_usd=0.1) as m,
+        pytest.raises(ProviderUnavailable, match="the provider is down"),
+    ):
+        m.chat(CHAT, user="hello")
     # Each wait doubles from one second up to a minute; five minutes after the first failure
     # no further attempt fits.
-    waits = [b - a for a, b in zip(sent_at, sent_at[1:], strict=False)]
+    waits = [b - a for a, b in itertools.pairwise(sent_at)]
     assert waits == [1, 2, 4, 8, 16, 32, 60, 60, 60]
     assert sent_at[0] == start
     assert [e.error for e in harness.record()] == ["provider_unavailable"] * len(sent_at)

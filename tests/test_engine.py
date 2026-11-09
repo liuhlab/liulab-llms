@@ -513,9 +513,13 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
     meet = threading.Barrier(3, timeout=MEET_S)
     stopped = threading.Event()
 
+    tries_of_c: list[str] = []
+
     def provider(form: dict[str, Any]) -> str:
         text = form["messages"][-1]["content"]
-        if text in ("word a", "word b", "word c"):
+        tries_of_c.extend([text] if text == "word c" else [])
+        # The gateway tries an unavailable provider again: c meets a and b on its first try only.
+        if text in ("word a", "word b") or tries_of_c == ["word c"]:
             meet.wait()
         if text == "word c":
             STOPS[reason](fake)
@@ -673,3 +677,21 @@ def test_each_unit_records_its_cost_and_time_per_pass(tmp_path: Path) -> None:
     assert (replayed.spent_usd, replayed.first_cost_usd) == pytest.approx((0.0, 0.038))
     assert (replayed.requests, replayed.cache_hits, replayed.seconds) == (2, 2, 0.0)
     assert replayed.usage == paid.usage
+
+
+def test_a_units_requests_count_the_gateways_retries(tmp_path: Path) -> None:
+    failed: list[str] = []
+
+    def once(form: dict[str, Any]) -> str:
+        if not failed:
+            failed.append("busy")
+            raise ProviderUnavailable("busy")
+        return split_words(form)
+
+    fake = FakeGateway(once, prices=PRICES)
+    with open_task(tmp_path, fake) as t:
+        k = kind()
+        run(t, k, ["b"])
+        (outcome,) = t.outcomes(k, "b")
+    assert outcome.cost is not None
+    assert (outcome.ending, outcome.cost.requests) == ("settled", 2)

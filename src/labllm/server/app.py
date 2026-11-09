@@ -3,9 +3,12 @@
 import dataclasses
 import itertools
 import logging
+import math
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
@@ -35,6 +38,29 @@ class Attempt:
     cost_usd: float
     response: Any = None
     input_tokens: int | None = None
+
+
+def retry_after_s(headers: Mapping[str, str] | None) -> float | None:
+    """Return the wait a provider's response headers ask for, in seconds, or None.
+
+    Reads ``retry-after-ms``, then ``Retry-After`` in seconds or as an HTTP date.
+    """
+    if headers is None:
+        return None
+    for name, scale in (("retry-after-ms", 1e-3), ("retry-after", 1.0)):
+        raw = headers.get(name)
+        if raw is None:
+            continue
+        try:
+            wait = float(raw) * scale
+        except ValueError:
+            try:
+                wait = parsedate_to_datetime(raw).timestamp() - time.time()
+            except (TypeError, ValueError):
+                continue
+        if math.isfinite(wait):
+            return max(wait, 0.0)
+    return None
 
 
 #: Sends one request form to a provider, once. It raises `ProviderUnavailable` for a failure
@@ -162,8 +188,9 @@ class Server:
                 if not isinstance(e, ProviderUnavailable):
                     raise
                 # Overload or no answer at all: every caller of this provider waits it out.
-                pause.extend(again := retries.again(e))
-                log.info("pausing %s for %.1f s: %s", form["provider"], again - sent, e)
+                pause.extend(until := retries.next_try(e))
+                log.info("pausing %s until %.1f s from now: %s", form["provider"], until - sent, e)
+                again = retries.again(e)
             except Exception as e:
                 self._settle(meter, reserve, 0.0)
                 self._record.add(self._ended(done, error=Stopped.reason, message=repr(e)))

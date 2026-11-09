@@ -42,7 +42,14 @@ def main(argv: list[str] | None = None) -> None:
         record = stack.enter_context(Record(conninfo))
         prices = Prices(settings.prices)
         providers = {"chat": LiteLLMChat(prices), "jev": TypeSafeJev(prices)}
-        server = Server(record, prices, providers, peak_margin_s=settings.peak_margin_s)
+        server = Server(
+            record,
+            prices,
+            providers,
+            peak_margin_s=settings.peak_margin_s,
+            limits=settings.limits,
+            retry_budget_s=settings.retry_budget_s,
+        )
         httpd = server.http(args.host, args.port)
         stack.callback(httpd.server_close)
         host, port = httpd.server_address[:2]

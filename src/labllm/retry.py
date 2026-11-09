@@ -22,15 +22,26 @@ class Retries:
         self._deadline: float | None = None
 
     def again(self, error: ProviderUnavailable) -> float:
-        """Return the time to try again after `error`, the latest attempt's failure.
-
-        The provider's `retry_after_s` wins; otherwise the wait doubles from one second, up to
-        a minute. The budget runs from the first failure.
+        """Return `next_try(error)`, unless the budget ends first.
 
         Raises
         ------
         ProviderUnavailable
             The next attempt would start after the budget ends.
+        """
+        until = self.next_try(error)
+        assert self._deadline is not None
+        if until > self._deadline:
+            raise ProviderUnavailable(
+                f"still failing after {self.attempts} attempts: {error}", status=error.status
+            ) from error
+        return until
+
+    def next_try(self, error: ProviderUnavailable) -> float:
+        """Return the time to try again after `error`, the latest attempt's failure.
+
+        The provider's `retry_after_s` wins; otherwise the wait doubles from one second, up to
+        a minute. The budget runs from the first failure.
         """
         now = self._clock.now()
         if self._deadline is None:
@@ -38,8 +49,4 @@ class Retries:
         wait = error.retry_after_s
         if wait is None:
             wait = min(_FIRST_WAIT_S * 2 ** max(self.attempts - 1, 0), _LONGEST_WAIT_S)
-        if now + wait > self._deadline:
-            raise ProviderUnavailable(
-                f"still failing after {self.attempts} attempts: {error}", status=error.status
-            ) from error
         return now + wait
