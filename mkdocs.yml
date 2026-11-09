@@ -4,7 +4,7 @@ site_name: liulab-llms
 site_url: https://liuhlab.github.io/liulab-llms/
 repo_url: https://github.com/liuhlab/liulab-llms
 repo_name: liuhlab/liulab-llms
-site_description: "Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling."
+site_description: "Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling."
 
 # The nav is EXPLICIT and lists only human-facing pages. Without it zensical builds the
 # navbar from the directory tree, which would put docs/adr/, docs/agents/ and

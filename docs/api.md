@@ -22,6 +22,22 @@ Two things about that marker are easy to get backwards:
 - A trailing comment written as plain prose looks just like a marker and is not one. Only
   the `# doctest:` form is read as one.
 
-## labllm
+## Calls
 
-::: labllm.core.greet
+::: labllm.model.Model
+
+::: labllm.client.Gateway
+
+::: labllm.client.Meter
+
+::: labllm.client.ChatReply
+
+::: labllm.client.JevReply
+
+## Errors
+
+::: labllm.errors
+
+## Tests
+
+::: labllm.testing

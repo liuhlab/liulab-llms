@@ -1,6 +1,6 @@
 # liulab-llms
 
-Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling.
+Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling.
 
 ## Set it up
 
@@ -13,11 +13,25 @@ pixi install
 
 ## Use it
 
-```python
-from labllm import greet
+Open an SSH tunnel to the lab gateway and set `LABLLM_GATEWAY` to its local address, such as
+`http://127.0.0.1:8000`. Then open a meter with a dollar ceiling and call through it:
 
-print(greet("lab"))
+```python
+from labllm import Gateway, Model, Stopped
+
+gw = Gateway(repo="my-repo")
+model = Model("deepseek", "deepseek-v4-flash", max_output_tokens=2000)
+with gw.meter("first try", ceiling_usd=1.0) as m:
+    try:
+        reply = m.chat(model, system="Answer in one word.", user="Is DNA a protein?")
+    except Stopped as stop:
+        print("stopped:", stop.reason)
+    else:
+        print(reply.text, reply.cost_usd, reply.cached)
 ```
+
+The same request sent again comes back from the cache at no cost. Tests use
+`labllm.testing.FakeGateway` instead, with a function you write playing the provider.
 
 ## Check your work
 

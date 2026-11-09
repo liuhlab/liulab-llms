@@ -2,7 +2,7 @@
 
 [project]
 name = "liulab-llms"
-description = "Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling."
+description = "Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13"

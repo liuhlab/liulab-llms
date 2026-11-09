@@ -6,3 +6,8 @@ of the form `vYYYY.M.PATCH`, and the tag is where the version comes from — not
 sets one.
 
 ## [Unreleased]
+
+### Added
+
+- The call layer: open a meter with a dollar ceiling and make blocking chat and Jev calls through
+  the lab gateway, with `labllm.testing.FakeGateway` standing in for it in tests.
