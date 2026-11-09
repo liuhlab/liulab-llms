@@ -128,6 +128,11 @@ class Gateway:
         self._transport = transport
         self._clock = clock or SystemClock()
 
+    @property
+    def clock(self) -> Clock:
+        """The clock every wait goes through, and the one a caller times its calls by."""
+        return self._clock
+
     def meter(self, label: str, *, ceiling_usd: float, off_peak_only: bool = False) -> "Meter":
         """Open a meter: a group of calls under one dollar ceiling.
 

@@ -13,7 +13,7 @@ from labllm.errors import (
     Stopped,
 )
 from labllm.model import Model
-from labllm.state import CheckResult, Outcome, Stamp, TaskInUse, UnknownLayout
+from labllm.state import CheckResult, Outcome, Stamp, TaskInUse, UnitCost, UnknownLayout
 
 #: Read from the installed distribution's metadata, which hatch-vcs fills from the newest
 #: git tag. No version string is written by hand anywhere in this repo.
@@ -41,6 +41,7 @@ __all__ = [
     "Task",
     "TaskInUse",
     "Unit",
+    "UnitCost",
     "UnitKind",
     "UnknownLayout",
     "__version__",
