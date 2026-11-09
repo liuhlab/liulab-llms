@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from labllm import wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import GatewayUnreachable, PeakHours
+from labllm.errors import GatewayUnreachable, PeakHours, Stopped
 from labllm.model import Model
 
 log = logging.getLogger(__name__)
@@ -160,7 +160,8 @@ class Gateway:
             raise ValueError(f"ceiling_usd must be a number of dollars, not {ceiling_usd!r}")
         return Meter(self, label, float(ceiling_usd), off_peak_only)
 
-    def _send(self, path: str, body: bytes) -> dict[str, Any]:
+    def _send(self, path: str, body: bytes, wake: threading.Event) -> dict[str, Any] | None:
+        """Return the reply, or None if `wake` ended a wait for off-peak hours."""
         deadline = self._clock.now() + self.connect_retry_s
         delay = 0.5
         while True:
@@ -179,7 +180,9 @@ class Gateway:
             except PeakHours as e:
                 log.info("%s; waiting", e)
                 # A gateway clock a little behind this one must not cause a burst of resends.
-                self._clock.sleep_until(max(e.until, sent + 1.0))
+                self._clock.sleep_until(max(e.until, sent + 1.0), wake)
+                if wake.is_set():
+                    return None
                 deadline = self._clock.now() + self.connect_retry_s
                 delay = 0.5
 
@@ -192,7 +195,8 @@ class Meter:
     identity on the gateway.
 
     Every call raises a `Stopped` subclass when the caller's loop must stop, and `Rejected`
-    when the request is a bug.
+    when the request is a bug. An off-peak-only call that meets peak hours waits, holding no
+    lock, until they end, then is sent again.
     """
 
     def __init__(self, gateway: Gateway, label: str, ceiling_usd: float, off_peak_only: bool):
@@ -206,6 +210,18 @@ class Meter:
         self.cache_hits = 0
         self._gateway = gateway
         self._lock = threading.Lock()
+        self._stopped: Stopped | None = None
+        self._wake = threading.Event()
+
+    def stop(self, error: Stopped) -> None:
+        """Send no further call. Calls already sent finish.
+
+        Each later call, and each one waiting out peak hours, raises `error`'s class with its
+        message at once.
+        """
+        with self._lock:
+            self._stopped = self._stopped or error
+        self._wake.set()
 
     def __enter__(self) -> "Meter":
         """Return the meter."""
@@ -251,6 +267,7 @@ class Meter:
         return JevReply(r["answers"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"])
 
     def _call(self, form: dict[str, Any], tag: str | None) -> dict[str, Any]:
+        path = wire.PATHS[form["route"]]
         call = wire.Call(
             form=form,
             meter=self.id,
@@ -261,7 +278,12 @@ class Meter:
             repo=self._gateway.repo,
             tag=tag,
         )
-        r = self._gateway._send(wire.PATHS[form["route"]], call.encode())
+        r = None if self._wake.is_set() else self._gateway._send(path, call.encode(), self._wake)
+        if r is None:
+            with self._lock:
+                stopped = self._stopped
+            assert stopped is not None
+            raise type(stopped)(str(stopped))
         try:
             cost, first, cached = float(r["cost_usd"]), float(r["first_cost_usd"]), r["cached"]
         except (KeyError, TypeError, ValueError) as e:

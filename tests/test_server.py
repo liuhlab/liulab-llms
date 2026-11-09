@@ -5,13 +5,14 @@ import subprocess
 import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 
 from gateway_harness import database, empty, read_record, running, stand_in
-from harness import CHAT, PRICES
+from harness import CHAT, HOUR, MONDAY, PRICES
 from labllm import (
     CeilingReached,
     ChatReply,
@@ -21,11 +22,14 @@ from labllm import (
     Rejected,
 )
 from labllm.client import HttpTransport
+from labllm.peak import MARGIN_S
 from labllm.server import Prices, Provider, Record, Server
 from labllm.server.chat import LiteLLMChat
 from labllm.server.prices import litellm
+from labllm.server.settings import load
 from labllm.testing import FakeClock, Price
 
+DEEPSEEK = "deepseek-v4-flash"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
 
 
@@ -140,6 +144,24 @@ def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conni
         with gw.meter("enough", ceiling_usd=0.05) as m:
             m.chat(model, user="hello")
     assert calls == ["sent"]
+
+
+def test_deepseeks_peak_hours_come_from_the_pinned_table(conninfo: str) -> None:
+    clock = FakeClock(MONDAY + 2 * HOUR)  # in DeepSeek's 01:00-04:00 UTC peak, by the spec
+    sent_at: list[float] = []
+    provider = stand_in(lambda form: sent_at.append(clock.now()) or "abc", {DEEPSEEK: Price(0, 0)})
+    server = Server(record := Record(conninfo), Prices(), {"chat": provider}, clock=clock)
+    with record, running(server) as url:
+        gw = Gateway(repo="tests", transport=HttpTransport(url), clock=clock)
+        with gw.meter("night", ceiling_usd=1.0, off_peak_only=True) as m:
+            m.chat(Model("deepseek", DEEPSEEK, max_output_tokens=10), user="hello")
+    assert sent_at == [MONDAY + 4 * HOUR]
+
+
+def test_the_peak_margin_is_a_setting(tmp_path: Path) -> None:
+    path = tmp_path / "settings.toml"
+    path.write_text("peak_margin_minutes = 10\n")
+    assert (load(path).peak_margin_s, load(None).peak_margin_s) == (600.0, MARGIN_S)
 
 
 def test_deepseek_gets_thinking_off_its_effort_and_json_mode(conninfo: str) -> None:

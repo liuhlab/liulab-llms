@@ -60,11 +60,13 @@ class FakeClock:
         with self._lock:
             self._now += seconds
 
-    def sleep_until(self, t: float) -> None:
-        """Move `now` forward to `t`, unless it is already later, and return.
+    def sleep_until(self, t: float, wake: threading.Event | None = None) -> None:
+        """Move `now` forward to `t`, unless it is already later or `wake` is set, and return.
 
         Threads waiting for one moment wake together, as they would in real time.
         """
+        if wake is not None and wake.is_set():
+            return
         with self._lock:
             self._now = max(self._now, t)
 

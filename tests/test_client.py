@@ -65,10 +65,10 @@ class HeldClock(FakeClock):
         super().__init__(start)
         self.waiting, self.go = threading.Event(), threading.Event()
 
-    def sleep_until(self, t: float) -> None:
+    def sleep_until(self, t: float, wake: threading.Event | None = None) -> None:
         self.waiting.set()
         assert self.go.wait(timeout=10)
-        super().sleep_until(t)
+        super().sleep_until(t, wake)
 
 
 def test_a_call_waiting_through_peak_holds_up_no_other_call() -> None:

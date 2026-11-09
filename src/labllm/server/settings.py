@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from labllm.model import Price
+from labllm.peak import MARGIN_S
 
 
 @dataclass(frozen=True)
@@ -18,10 +19,13 @@ class Settings:
     prices
         A price for each exact model name, entered per million tokens. It wins over LiteLLM's
         pinned table.
+    peak_margin_s
+        New off-peak-only calls stop this many seconds before peak starts, entered in minutes.
     """
 
     database: str | None = None
     prices: dict[str, Price] = field(default_factory=dict)
+    peak_margin_s: float = MARGIN_S
 
 
 def load(path: Path | None) -> Settings:
@@ -32,6 +36,7 @@ def load(path: Path | None) -> Settings:
     A settings file::
 
         database = "dbname=labllm"
+        peak_margin_minutes = 5
 
         [prices."my-model"]
         input_usd_per_million = 0.5
@@ -46,4 +51,5 @@ def load(path: Path | None) -> Settings:
         )
         for name, p in data.get("prices", {}).items()
     }
-    return Settings(database=data.get("database"), prices=prices)
+    margin = float(data.get("peak_margin_minutes", MARGIN_S / 60)) * 60
+    return Settings(database=data.get("database"), prices=prices, peak_margin_s=margin)

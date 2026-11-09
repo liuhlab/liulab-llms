@@ -40,7 +40,10 @@ def main(argv: list[str] | None = None) -> None:
             conninfo = stack.enter_context(throwaway_database())
         record = stack.enter_context(Record(conninfo))
         prices = Prices(settings.prices)
-        httpd = Server(record, prices, {"chat": LiteLLMChat(prices)}).http(args.host, args.port)
+        server = Server(
+            record, prices, {"chat": LiteLLMChat(prices)}, peak_margin_s=settings.peak_margin_s
+        )
+        httpd = server.http(args.host, args.port)
         stack.callback(httpd.server_close)
         host, port = httpd.server_address[:2]
         log.info("serving on http://%s:%s", host, port)

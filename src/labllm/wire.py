@@ -11,7 +11,7 @@ import json
 import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 from labllm.errors import (
     CeilingReached,
@@ -171,6 +171,10 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
         if error is not None:
             raise error(data.get("message", ""))
         until = data.get("until")
-        if reason == PeakHours.reason and type(until) in (int, float) and math.isfinite(until):
+        if reason == PeakHours.reason and _seconds(until):
             raise PeakHours(data.get("message", ""), until=float(until))
     raise GatewayUnreachable(f"the gateway answered {status}: {body[:200]!r}")
+
+
+def _seconds(value: Any) -> TypeGuard[int | float]:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)

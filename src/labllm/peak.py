@@ -15,16 +15,16 @@ from labllm.errors import PeakHours
 MARGIN_S = 300.0
 
 _DAY = 86400.0
-_WEEKDAYS = {
-    name: number
-    for number, names in enumerate(
-        [("mon", "monday"), ("tue", "tues", "tuesday"), ("wed", "wednesday")]
-        + [("thu", "thur", "thurs", "thursday"), ("fri", "friday")]
-        + [("sat", "saturday"), ("sun", "sunday")],
-        start=1,
-    )
-    for name in names
-}
+_NAMES = [
+    ("mon", "monday"),
+    ("tue", "tues", "tuesday"),
+    ("wed", "wednesday"),
+    ("thu", "thur", "thurs", "thursday"),
+    ("fri", "friday"),
+    ("sat", "saturday"),
+    ("sun", "sunday"),
+]
+_WEEKDAYS = {name: number for number, names in enumerate(_NAMES, start=1) for name in names}
 
 _Rule = tuple[frozenset[int] | None, tuple[tuple[int, int], ...]]
 
@@ -102,7 +102,7 @@ class OffPeak:
         return send
 
     def _change_after(self, t: float) -> float | None:
-        """The first moment after `t` on the other side of the peak boundary, within a week."""
+        """Return the first moment after `t` across a peak boundary, within a week."""
         state = self.is_off_peak(t)
         for edge in self._boundaries(t):
             if edge > t and self.is_off_peak(edge) != state:
