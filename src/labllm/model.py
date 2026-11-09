@@ -22,3 +22,11 @@ class Model:
     effort: str | None = None
     temperature: float | None = None
     max_output_tokens: int = 4096
+
+
+@dataclass(frozen=True)
+class Price:
+    """What a model costs, in dollars per token."""
+
+    input_usd_per_token: float
+    output_usd_per_token: float

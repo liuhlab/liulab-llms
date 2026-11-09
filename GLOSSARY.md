@@ -50,6 +50,13 @@ each unit's outcome and returns counts per ending. Rerunning the same command st
 pass whose finished calls replay free, which is how a stopped pass resumes.
 _Avoid_: run, batch, job, round
 
+### Record
+
+The gateway's one table of every exchange, which is also its response cache: the cache
+entry for a request is its first successful exchange not retired. A bad entry is retired by
+hand and stays in the record. Each meter's spend is rebuilt from it after a restart.
+_Avoid_: log, transcript, cache table
+
 ### Refused
 
 An ending: the kind's code refused the unit with a message. No answer is kept.

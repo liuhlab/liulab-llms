@@ -26,6 +26,8 @@ Two things about that marker are easy to get backwards:
 
 ::: labllm.model.Model
 
+::: labllm.model.Price
+
 ::: labllm.client.Gateway
 
 ::: labllm.client.Meter
