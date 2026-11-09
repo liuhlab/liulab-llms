@@ -115,7 +115,7 @@ The swap renames both or neither; an open session on either database makes it fa
 ```bash
 gcloud storage ls gs://<bucket>/
 ssh llm-gateway 'sudo labllm-db createdb labllm_restored &&
-  gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm_restored'
+  sudo gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm_restored'
 ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
   sudo labllm-db psql -d postgres -v ON_ERROR_STOP=1 -1 \
     -c "ALTER DATABASE labllm RENAME TO labllm_before_restore" \
