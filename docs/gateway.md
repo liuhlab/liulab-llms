@@ -35,11 +35,16 @@ price.
 
 ```toml
 database = "dbname=labllm"
+peak_margin_minutes = 5
 
 [prices."my-model"]
 input_usd_per_million = 0.5
 output_usd_per_million = 2.0
 ```
+
+Some providers, such as DeepSeek, charge less outside their busy hours. A caller can ask for
+its calls to go out only at those times. `peak_margin_minutes` is how long before the busy
+hours start the gateway stops sending such calls. It is 5 unless you set it.
 
 Pass it with `--settings settings.toml`. With `--throwaway`, the database line is ignored.
 

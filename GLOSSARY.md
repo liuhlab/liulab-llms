@@ -43,6 +43,14 @@ A group of calls under one ceiling, with its own identity on the gateway. Its la
 people, so two meters with one label never share a ceiling. A pass opens one meter.
 _Avoid_: session, budget
 
+### Off-peak only
+
+A meter and pass setting, off by default. Its calls go to a provider only outside the peak
+hours of the model's price table entry: in peak the gateway answers with the time peak ends,
+and the call waits and is sent again. New calls stop a set margin before peak starts. A cache
+hit is answered at once, and a model with no off-peak hours is unaffected.
+_Avoid_: night mode, discount mode
+
 ### Pass
 
 One run of a unit kind over the keys it is given, in that order, under one meter. It records

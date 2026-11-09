@@ -144,7 +144,8 @@ class Gateway:
         ceiling_usd
             Required. The gateway refuses a call whose largest possible cost would cross it.
         off_peak_only
-            Send calls only in a provider's off-peak hours.
+            Send calls only outside the peak hours in the model's price table entry. In peak
+            a call waits until they end; a model with no off-peak hours is unaffected.
 
         Raises
         ------

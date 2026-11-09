@@ -388,6 +388,9 @@ class Task:
         tries a call, and every unit not started end unfinished, with the reason recorded.
         A unit that needs no further call keeps its ending.
 
+        With `off_peak_only`, a call that meets peak hours waits until they end, then goes
+        out; a stop ends that wait at once.
+
         Raises
         ------
         ValueError
