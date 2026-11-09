@@ -35,5 +35,5 @@ call clear of the boundary either way, unless the call outlasts it.
 - `Clock.sleep_until(t, wake)` joins the clock seam. `FakeClock` moves to the later of now and
   `t`, so threads waiting for one moment wake together.
 - A unit's time per pass includes its wait.
-- The check runs once, before the ceiling hold. A gateway that later waits or retries before
-  sending must check again before each attempt.
+- The check runs before each attempt's ceiling hold, retries included, once the call's turn
+  at its rate limit comes.

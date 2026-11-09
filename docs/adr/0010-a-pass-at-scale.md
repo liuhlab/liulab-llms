@@ -22,9 +22,10 @@ Trusting the kind instead would record answers made without a model's reply; the
 that such a unit's paid calls are only replayed, free, on the rerun.
 
 **Cost per unit comes from the replies.** `Unit` sums each reply's cost now, first cost,
-cache flag and usage; the meter still gives the pass's totals. `requests` counts every call
-the unit sent, answered or not. Retries the gateway makes inside one call are in its record,
-by meter and tag, but not in the reply, so they are not counted here. `usage` adds the
+cache flag and usage, and a failed call's paid cost from its error; the meter still gives the
+pass's totals, each the sum of its units'. `requests` counts the requests sent to providers,
+the gateway's retries included, from each reply's or error's `attempts`; a cache hit sends
+none. `usage` adds the
 providers' numbers key by key, nested keys too, replays included, since each provider names
 its token counts its own way. Time runs on `Gateway.clock`, the client's clock, from the
 first request to the ending, so a test's clock times it.
