@@ -1,0 +1,29 @@
+# The lab gateway's VM on GCP. Launch from this folder, beside its .sky.yaml:
+#
+#   sky launch -c llm-gateway llm-gateway.yaml -y --env BACKUP_BUCKET=gs://<bucket>
+#
+# The data disk must exist first, in the zone named here. skills/gateway-setup has the steps.
+name: llm-gateway
+
+resources:
+  infra: gcp/us-central1/us-central1-a
+  instance_type: e2-small
+  disk_size: 30
+  use_spot: false
+  # Undocumented for GCP VMs in SkyPilot. Attaches the disk by name; auto_delete false keeps
+  # it through `sky down`.
+  volumes:
+    - name: llm-gateway-data
+      path: /mnt/data
+      auto_delete: false
+
+envs:
+  # Moving this tag, then rerunning `sky launch`, is the upgrade.
+  GATEWAY_TAG: v2026.11.0
+  BACKUP_BUCKET: null
+
+# The cloud-neutral install, synced to the VM.
+workdir: ../gateway
+
+setup: |
+  sudo GATEWAY_TAG="$GATEWAY_TAG" BACKUP_BUCKET="$BACKUP_BUCKET" bash install.sh

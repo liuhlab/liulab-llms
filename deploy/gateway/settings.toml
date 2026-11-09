@@ -1,0 +1,14 @@
+# The lab gateway's settings. install.sh copies this file to /etc/labllm/settings.toml.
+# Each limit is the provider's own, from its console or its rate-limit page.
+database = "host=/run/labllm-postgres dbname=labllm"
+retry_budget_minutes = 5
+
+# Shared by every TypeSafe key in the organization.
+[limits.typesafe]
+requests_per_second = 80
+input_tokens_per_second = 100_000
+
+# DeepSeek caps calls at once per account and per model. One provider table keeps all its
+# models together under the lowest cap, deepseek-v4-pro's.
+[limits.deepseek]
+calls_at_once = 500
