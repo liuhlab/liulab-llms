@@ -35,8 +35,9 @@ spend is summed from its rows the first time the server sees it after a start.
 
 ## Consequences
 
-- The ceiling's input estimate is the prompt's UTF-8 bytes, an upper bound for byte-level
-  tokenizers. It is too high for a rate limit on input tokens.
+- The ceiling's input estimate is the UTF-8 bytes of everything sent as input, as JSON: the
+  messages with their roles, and the schema. That bounds a byte-level tokenizer's count, but
+  is too high for a rate limit on input tokens.
 - LiteLLM's usage object is recorded as the provider's usage. For DeepSeek it carries
   DeepSeek's own fields; for Claude LiteLLM rewrites the input count and keeps no raw copy.
 - An empty reply is an error, never a cache entry.

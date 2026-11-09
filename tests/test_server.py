@@ -182,6 +182,21 @@ def test_a_failure_inside_the_gateway_is_gateway_unreachable(conninfo: str) -> N
             m.chat(CHAT, user="hello")
 
 
+def test_the_reservation_counts_the_schema_and_system_prompt_as_input(conninfo: str) -> None:
+    calls: list[str] = []
+    prices = {"by-input": Price(input_usd_per_token=0.001, output_usd_per_token=0.0)}
+    provider = stand_in(lambda form: calls.append("sent") or "abc", prices)
+    model = Model("openai", "by-input")
+    # "hi" alone is 2 bytes; the schema and the system prompt are far more than 50.
+    with (
+        gateway(conninfo, {"chat": provider}, prices) as gw,
+        gw.meter("input", ceiling_usd=0.05) as m,
+        pytest.raises(CeilingReached),
+    ):
+        m.chat(model, system="be brief " * 3, user="hi", schema=SCHEMA)
+    assert calls == []
+
+
 def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conninfo: str) -> None:
     calls: list[str] = []
     provider = stand_in(lambda form: calls.append("sent") or "abc", {"gpt-5.5": Price(0, 0)})
@@ -338,14 +353,15 @@ def test_input_tokens_are_estimated_before_sending_and_corrected_from_usage(
         times.append(("", clock.now()))
         return Attempt(output="abc", usage={}, cost_usd=0.0, input_tokens=10)
 
-    # A model's own limit; 400 bytes estimate as 100 tokens, which the provider counts as 10.
+    # A model's own limit; 400 bytes of input estimate as 100 tokens, which the provider
+    # counts as 10. The message, as JSON with its role, is 30 bytes more than its text.
     limits = {"openai/test-chat": RateLimit(input_tokens_per_second=100)}
     with (
         gateway(conninfo, {"chat": counted}, clock=clock, limits=limits) as gw,
         gw.meter("tokens", ceiling_usd=1.0) as m,
     ):
-        m.chat(CHAT, user="x" * 400)
-        m.chat(CHAT, user="y" * 400)
+        m.chat(CHAT, user="x" * 370)
+        m.chat(CHAT, user="y" * 370)
     # 90 tokens came back with the correction; the second call waits for 10 more.
     assert [t for _, t in times] == pytest.approx([0.0, 0.1])
 

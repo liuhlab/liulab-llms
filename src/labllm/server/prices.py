@@ -67,7 +67,7 @@ class Prices:
     def largest_cost(self, form: dict[str, Any]) -> float:
         """Return the most the call can cost: estimated input plus its full output allowance.
 
-        Input is estimated as its UTF-8 bytes, which no byte-level tokenizer exceeds.
+        Input is estimated as `input_bytes`, which no byte-level tokenizer exceeds.
         """
         price = self.price(form)
         return (
@@ -101,8 +101,13 @@ class Prices:
 
 
 def input_bytes(form: dict[str, Any]) -> int:
-    """Return the UTF-8 bytes of a form's input: its messages, or Jev's description and questions."""
+    """Return the UTF-8 bytes of everything a form sends as input, as JSON.
+
+    For chat, the messages with their roles, and the schema; for Jev, its description and
+    questions.
+    """
     if form["route"] == "chat":
-        return sum(len(m["content"].encode()) for m in form["messages"])
-    text = form["description"] + json.dumps(form["questions"], ensure_ascii=False)
-    return len(text.encode())
+        sent = [form["messages"], form.get("schema")]
+    else:
+        sent = [form["description"], form["questions"]]
+    return len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode())
