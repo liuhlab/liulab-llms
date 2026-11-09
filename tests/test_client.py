@@ -1,6 +1,7 @@
 """The client's own behaviour, over `FakeGateway` and over HTTP."""
 
 import getpass
+import json
 import socket
 import threading
 from collections.abc import Iterator
@@ -143,3 +144,16 @@ def test_a_closed_port_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = Gateway(repo="tests", clock=FakeClock())
     with gw.meter("closed", ceiling_usd=1.0) as m, pytest.raises(GatewayUnreachable):
         m.chat(CHAT, user="hello")
+
+
+@pytest.mark.parametrize(("cached", "attempts"), [(False, 1), (True, 0)])
+def test_a_reply_from_a_gateway_that_counts_no_attempts_gets_a_count(
+    cached: bool, attempts: int
+) -> None:
+    class Older:
+        def send(self, path: str, body: bytes) -> tuple[int, bytes]:
+            reply = {"text": "abc", "usage": {}, "cost_usd": 0.0, "first_cost_usd": 0.0}
+            return 200, json.dumps(reply | {"cached": cached}).encode()
+
+    with Gateway(repo="tests", transport=Older()).meter("old", ceiling_usd=1.0) as m:
+        assert m.chat(CHAT, user="hello").attempts == attempts

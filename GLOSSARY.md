@@ -65,6 +65,13 @@ each unit's outcome and returns counts per ending. Rerunning the same command st
 pass whose finished calls replay free, which is how a stopped pass resumes.
 _Avoid_: run, batch, job, round
 
+### Rate limit
+
+A provider's limit, set in the gateway's settings for all callers together: requests a
+second, input tokens a second, or calls at once, for the provider or for one of its models.
+A per-minute limit is entered as its per-second rate. A call over one waits; none is refused.
+_Avoid_: quota, throttle, ceiling
+
 ### Record
 
 The gateway's one table of every exchange, which is also its response cache: the cache
@@ -142,3 +149,10 @@ _Avoid_: step list, pipeline
 An ending: the kind returned an answer that fits its schema, but a check failed. The answer
 is kept with each failed check's message.
 _Avoid_: doubtful, partial
+
+### Waiting call
+
+A call the gateway holds back for a rate limit or a provider's pause after overload. Waiting
+calls go first come, first served, holding nothing against their meter's ceiling. Waiting
+for a rate limit never ends a call; only a provider still failing after the retry budget does.
+_Avoid_: queued request, throttled call
