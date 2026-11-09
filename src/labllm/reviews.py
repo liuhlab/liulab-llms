@@ -17,8 +17,8 @@ if TYPE_CHECKING:
     from labllm.engine import UnitKind
 
 
-#: The default of `answer` in a save: none given, as for a drop.
 NO_ANSWER: Any = object()
+"""The default of `answer` in a save: none given, as for a drop."""
 
 
 class ChecksFailed(ValueError):  # noqa: N818 - the name callers catch

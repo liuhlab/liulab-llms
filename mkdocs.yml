@@ -18,6 +18,8 @@ site_description: "Calls language models for lab repos through one shared gatewa
 # rule `agent-docs-unpublished` fails the build if you do.
 nav:
   - Home: index.md
+  - Write your first unit kind: tutorial.md
+  - Reach the lab gateway: reach-the-gateway.md
   - Run the gateway: gateway.md
   - API reference: api.md
 
@@ -80,6 +82,11 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.inlinehilite
+  # The tutorial quotes tested code from tests/tutorial/ by section. A missing file or section
+  # fails the build, so the page cannot quote code that is gone.
+  - pymdownx.snippets:
+      check_paths: true
+      dedent_subsections: true
   - pymdownx.superfences
   - toc:
       permalink: true

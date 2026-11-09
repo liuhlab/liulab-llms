@@ -7,6 +7,12 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- A tutorial that walks one unit kind from its declaration through a pass, a pass with a
+  stronger model, and a person's review, with its tests on the fake gateway.
+- A page on reaching the lab gateway through an SSH tunnel.
+
 ## [2026.11.0] - 2026-11-09
 
 The first release.

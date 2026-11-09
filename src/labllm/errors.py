@@ -79,5 +79,5 @@ class PeakHours(Exception):  # noqa: N818 - named for what the gateway says
         self.until = until
 
 
-#: The four stops: every `Stopped` error a call raises is one of them.
 STOPS = (CeilingReached, ProviderExhausted, ProviderUnavailable, GatewayUnreachable)
+"""The four stops: every `Stopped` error a call raises is one of them."""
