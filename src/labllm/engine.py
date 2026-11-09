@@ -1,12 +1,13 @@
 """The engine: a repo's unit kinds, and passes that run them over many units."""
 
+import copy
 import json
 import os
 import subprocess
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, packages_distributions, version
 from pathlib import Path
@@ -16,9 +17,18 @@ from typing import Any, Literal, NoReturn
 import fastjsonschema
 
 from labllm.client import ChatReply, Gateway, JevReply, Meter
+from labllm.clock import Clock
 from labllm.errors import Stopped
 from labllm.model import Model
-from labllm.state import ENDINGS, NOT_ENDINGS, CheckResult, Outcome, PassStart, StateFile
+from labllm.state import (
+    ENDINGS,
+    NOT_ENDINGS,
+    CheckResult,
+    Outcome,
+    PassStart,
+    StateFile,
+    UnitCost,
+)
 
 
 class Held(Exception):  # noqa: N818 - the name callers raise
@@ -102,22 +112,59 @@ class _Refuse(BaseException):
         self.name, self.message = name, message
 
 
+class _Stop:
+    """A pass's stop: the first `Stopped` error any of its units met."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.error: Stopped | None = None
+
+    def halt(self, error: Stopped) -> None:
+        with self._lock:
+            if self.error is None:
+                self.error = error
+
+    @property
+    def reason(self) -> str | None:
+        return None if self.error is None else self.error.reason
+
+    def check(self) -> None:
+        """Raise the stop's own class if the pass has stopped, so no new call is sent."""
+        if self.error is not None:
+            raise type(self.error)(f"the pass stopped: {self.error.reason}")
+
+
 class Unit:
     """One unit as its kind's function sees it: its key, its inputs, and models by role.
 
-    Every call is tagged with the unit's key on the pass's meter.
+    Every call is tagged with the unit's key on the pass's meter. Once the pass has stopped, a
+    call raises the stop's error without being sent, and the unit ends unfinished.
     """
 
     def __init__(
-        self, key: str, inputs: Inputs, kind: UnitKind, meter: Meter, models: Mapping[str, Model]
+        self,
+        key: str,
+        inputs: Inputs,
+        kind: UnitKind,
+        meter: Meter,
+        models: Mapping[str, Model],
+        stop: _Stop,
+        clock: Clock,
     ) -> None:
         self.key = key
         self.inputs = inputs
         self._kind = kind
         self._meter = meter
         self._models = models
+        self._stop = stop
+        self._clock = clock
+        self._stopped: str | None = None
         self._checks: list[CheckResult] = []
         self._lock = threading.Lock()
+        self._first: float | None = None
+        self._spent = self._first_cost = 0.0
+        self._requests = self._cache_hits = 0
+        self._usage: dict[str, Any] = {}
 
     def chat(
         self,
@@ -129,12 +176,82 @@ class Unit:
     ) -> ChatReply:
         """Send one chat request to the model filling `role`, as `Meter.chat` does."""
         model = self._model(role, "chat")
-        return self._meter.chat(model, user=user, system=system, schema=schema, tag=self.key)
+        return self._send(
+            lambda: self._meter.chat(model, user=user, system=system, schema=schema, tag=self.key)
+        )
 
     def jev(self, role: str, *, description: str, questions: Sequence[Any]) -> JevReply:
         """Ask the model filling `role` Jev's closed questions, as `Meter.jev` does."""
         model = self._model(role, "jev")
-        return self._meter.jev(model, description=description, questions=questions, tag=self.key)
+        return self._send(
+            lambda: self._meter.jev(
+                model, description=description, questions=questions, tag=self.key
+            )
+        )
+
+    def _send[R: ChatReply | JevReply](self, call: Callable[[], R]) -> R:
+        try:
+            self._stop.check()
+        except Stopped as e:
+            self._met(str(e))
+            raise
+        with self._lock:
+            if self._first is None:
+                self._first = self._clock.now()
+            self._requests += 1
+        try:
+            reply = call()
+        except Stopped as e:
+            self._stop.halt(e)
+            self._met(f"{e.reason}: {e}")
+            raise
+        with self._lock:
+            self._spent += reply.cost_usd
+            self._first_cost += reply.first_cost_usd
+            self._cache_hits += bool(reply.cached)
+            if isinstance(reply.usage, Mapping):
+                _add_usage(self._usage, reply.usage)
+        return reply
+
+    def _met(self, reason: str) -> None:
+        with self._lock:
+            self._stopped = self._stopped or reason
+
+    def _cost(self) -> UnitCost:
+        """Return the unit's cost so far, timed to now."""
+        with self._lock:
+            seconds = None if self._first is None else self._clock.now() - self._first
+            return UnitCost(
+                self._spent,
+                self._first_cost,
+                self._requests,
+                self._cache_hits,
+                copy.deepcopy(self._usage),
+                seconds,
+            )
+
+    def each[T, R](self, fn: Callable[[T], R], items: Iterable[T], *, at_once: int = 8) -> list[R]:
+        """Call `fn` on every item, `at_once` at a time, and return the results in item order.
+
+        For many requests at once within the unit. Once `fn` raises, no further item starts;
+        the running ones finish, then the first error is raised. `u.settle` and `u.refuse`
+        inside `fn` end the unit as they would outside it.
+
+        Raises
+        ------
+        ValueError
+            `at_once` is below one.
+        """
+        if at_once < 1:
+            raise ValueError(f"at_once must be one or more, not {at_once}")
+        items = list(items)
+        results: list[Any] = [None] * len(items)
+
+        def one(i: int) -> None:
+            results[i] = fn(items[i])
+
+        _at_once(one, iter(range(len(items))), min(at_once, len(items)), halted=lambda: False)
+        return results
 
     def check(self, name: str, message: str | None) -> None:
         """Record a check: `message` None passes, a string fails and makes the unit unsettled."""
@@ -185,7 +302,7 @@ class _Ended:
     answer_json: str | None = None
     reason: str | None = None
     checks: list[CheckResult] = field(default_factory=list)
-    stop: str | None = None
+    cost: UnitCost = field(default_factory=UnitCost)
 
 
 class Task:
@@ -248,19 +365,28 @@ class Task:
         ceiling_usd: float,
         label: str,
         off_peak_only: bool = False,
+        units_at_once: int = 32,
     ) -> PassResult:
-        """Run `kind` over `keys`, in the order given, under one new meter.
+        """Run `kind` over `keys`, starting them in the order given, under one new meter.
 
-        Each unit's outcome is recorded as it ends. A `Stopped` error stops the pass: the unit
-        that met it and every unit after it end unfinished, with the reason recorded.
+        `units_at_once` units run at once, each on its own thread, so the kind's function must
+        be safe to run on many threads. Each unit's outcome and cost are recorded as it ends.
+
+        A `Stopped` error stops the pass. Calls already sent finish and are paid; no new call
+        is sent and no new unit starts. The unit that met the error, every unit that then
+        tries a call, and every unit not started end unfinished, with the reason recorded.
+        A unit that needs no further call keeps its ending.
 
         Raises
         ------
         ValueError
-            `models` does not fill exactly the kind's roles, or `keys` repeats a key.
+            `models` does not fill exactly the kind's roles, `keys` repeats a key, or
+            `units_at_once` is below one.
         TypeError
             A key is not a string.
         """
+        if units_at_once < 1:
+            raise ValueError(f"units_at_once must be one or more, not {units_at_once}")
         keys = list(keys)
         if not all(isinstance(key, str) for key in keys):
             raise TypeError("every key must be a string")
@@ -283,25 +409,35 @@ class Task:
             )
         )
         counts: dict[str, int] = dict.fromkeys((*ENDINGS[:3], *NOT_ENDINGS), 0)
-        stopped: str | None = None
-        with meter:
-            for key in keys:
-                if stopped is None:
-                    ended = self._run_unit(kind, key, meter, models)
-                    stopped = ended.stop
-                else:
-                    ended = _Ended("unfinished", reason=f"the pass stopped: {stopped}")
-                self._state.record(
-                    kind.name,
-                    key,
-                    pass_id,
-                    ending=ended.ending,
-                    inputs_tag=ended.inputs_tag,
-                    answer_json=ended.answer_json,
-                    reason=ended.reason,
-                    checks=ended.checks,
-                )
+        lock = threading.Lock()
+        stop = _Stop()
+
+        def work(key: str) -> None:
+            ended = self._run_unit(kind, key, meter, models, stop)
+            self._state.record(
+                kind.name,
+                key,
+                pass_id,
+                ending=ended.ending,
+                inputs_tag=ended.inputs_tag,
+                answer_json=ended.answer_json,
+                reason=ended.reason,
+                checks=ended.checks,
+                cost=ended.cost,
+            )
+            with lock:
                 counts[ended.ending] += 1
+
+        rest = iter(keys)
+        with meter:
+            _at_once(work, rest, units_at_once, halted=lambda: stop.error is not None)
+        stopped = stop.reason
+        unstarted = list(rest)
+        if unstarted:
+            self._state.record_unstarted(
+                kind.name, unstarted, pass_id, reason=f"the pass stopped: {stopped}"
+            )
+            counts["unfinished"] += len(unstarted)
         self._state.end_pass(
             pass_id,
             stopped=stopped,
@@ -322,41 +458,51 @@ class Task:
         )
 
     def _run_unit(
-        self, kind: UnitKind, key: str, meter: Meter, models: Mapping[str, Model]
+        self, kind: UnitKind, key: str, meter: Meter, models: Mapping[str, Model], stop: _Stop
     ) -> _Ended:
+        """Run one unit to its outcome.
+
+        A unit that met the pass's stop ends unfinished, whatever its code did next.
+        """
         ended = _Ended("unfinished")
+        unit: Unit | None = None
         try:
             inputs = kind.load(key)
             if not isinstance(inputs, Inputs) or not isinstance(inputs.tag, str):
                 raise TypeError(f"load returned {inputs!r}, not Inputs with a str tag")
             ended.inputs_tag = inputs.tag
-            unit = Unit(key, inputs, kind, meter, models)
+            unit = Unit(key, inputs, kind, meter, models, stop, self._gateway.clock)
             ended.checks = unit._checks
             try:
                 answer = kind.run(unit)
             except _Settle as s:
                 ended.answer_json = kind._fit(s.answer)
                 ended.ending = "settled"
-                return ended
             except _Refuse as r:
                 unit.check(r.name, r.message)
                 ended.ending, ended.reason = "refused", r.message
-                return ended
-            ended.answer_json = kind._fit(answer)
-            stored = json.loads(ended.answer_json)
-            for check in kind.answer_checks:
-                unit.check(check.__name__, check(inputs, stored))
-            failed = any(not c.passed for c in ended.checks)
-            ended.ending = "unsettled" if failed else "settled"
-            return ended
+            else:
+                ended.answer_json = kind._fit(answer)
+                stored = json.loads(ended.answer_json)
+                for check in kind.answer_checks:
+                    unit.check(check.__name__, check(inputs, stored))
+                failed = any(not c.passed for c in ended.checks)
+                ended.ending = "unsettled" if failed else "settled"
         except Held as h:
-            return _Ended("held", ended.inputs_tag, reason=str(h), checks=ended.checks)
+            ended = _Ended("held", ended.inputs_tag, reason=str(h), checks=ended.checks)
         except Stopped as e:
+            stop.halt(e)
             reason = f"{e.reason}: {e}"
-            return _Ended("unfinished", ended.inputs_tag, None, reason, ended.checks, e.reason)
+            ended = _Ended("unfinished", ended.inputs_tag, reason=reason, checks=ended.checks)
         except Exception as e:
             reason = "".join(traceback.format_exception(e, limit=-3))
-            return _Ended("unfinished", ended.inputs_tag, reason=reason, checks=ended.checks)
+            ended = _Ended("unfinished", ended.inputs_tag, reason=reason, checks=ended.checks)
+        if unit is not None:
+            if unit._stopped is not None:
+                ended = _Ended("unfinished", ended.inputs_tag, reason=unit._stopped)
+                ended.checks = unit._checks
+            ended.cost = unit._cost()
+        return ended
 
     def current(self, kind: UnitKind, key: str) -> Outcome | None:
         """Return the unit's current answer: its outcome in the latest pass that reached an ending.
@@ -381,6 +527,60 @@ class Task:
         if unknown := set(endings) - set(ENDINGS):
             raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
         return self._state.keys(kind.name, endings)
+
+
+def _add_usage(total: dict[str, Any], usage: Mapping[str, Any]) -> None:
+    """Add each number in `usage` to `total` under its key, inside nested mappings too."""
+    for key, value in usage.items():
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            prior = total.get(key, 0)
+            if isinstance(prior, int | float):
+                total[key] = prior + value
+        elif isinstance(value, Mapping):
+            inner = total.setdefault(key, {})
+            if isinstance(inner, dict):
+                _add_usage(inner, value)
+
+
+def _at_once[T](
+    fn: Callable[[T], None], items: Iterator[T], at_once: int, *, halted: Callable[[], bool]
+) -> None:
+    """Call `fn` on each item, `at_once` threads at a time, taking items in order.
+
+    No item is taken once `halted()` is true or a call has raised; the calls running then
+    finish first. Items not taken stay in `items`. Re-raises the first error a call raised.
+    """
+    lock = threading.Lock()
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        while True:
+            with lock:
+                if errors or halted():
+                    return
+                try:
+                    item = next(items)
+                except StopIteration:
+                    return
+            try:
+                fn(item)
+            except BaseException as e:
+                with lock:
+                    errors.append(e)
+                return
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(at_once)]
+    for thread in threads:
+        thread.start()
+    try:
+        for thread in threads:
+            thread.join()
+    except BaseException as e:  # an interrupt while waiting: start no more items
+        with lock:
+            errors.append(e)
+        raise
+    if errors:
+        raise errors[0]
 
 
 def _repo_version(fn: Callable[..., Any]) -> str:

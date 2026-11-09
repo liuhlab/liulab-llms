@@ -52,6 +52,8 @@ Two things about that marker are easy to get backwards:
 
 ::: labllm.state.Outcome
 
+::: labllm.state.UnitCost
+
 ::: labllm.state.CheckResult
 
 ::: labllm.state.Stamp
