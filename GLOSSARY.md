@@ -127,7 +127,8 @@ _Avoid_: failed, errored
 ### Unit
 
 One independent piece of work, named by a string key, such as one sequencing Series. Its
-current answer is its outcome in the latest pass that reached an ending.
+current answer is its outcome in the latest pass that reached an ending, unless a review made
+for that outcome's inputs tag outranks it.
 _Avoid_: item, row, sample
 
 ### Unit kind

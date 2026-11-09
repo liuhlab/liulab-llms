@@ -11,3 +11,5 @@ sets one.
 
 - The call layer: open a meter with a dollar ceiling and make blocking chat and Jev calls through
   the lab gateway, with `labllm.testing.FakeGateway` standing in for it in tests.
+- The review queue and reviews: list the units a person must look at, and save a person's
+  answer or drop to a file per kind that the repo commits to git.
