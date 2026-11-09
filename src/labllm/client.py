@@ -7,7 +7,7 @@ import math
 import os
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Protocol
@@ -38,7 +38,11 @@ class ChatReply:
 
 @dataclass(frozen=True)
 class JevReply:
-    """A Jev call's answer. `answers` is the JSON exactly as Jev returned it."""
+    """A Jev call's answer. `answers` is the JSON exactly as Jev returned it.
+
+    From the real gateway it is the ``answers`` object of Jev's response, keyed by question
+    name: a question Jev left unanswered is absent.
+    """
 
     answers: Any
     usage: dict[str, Any]
@@ -259,10 +263,14 @@ class Meter:
         model: Model,
         *,
         description: str,
-        questions: Sequence[Any],
+        questions: Mapping[str, Any],
         tag: str | None = None,
     ) -> JevReply:
-        """Ask Jev closed questions about `description` and wait for its answers."""
+        """Ask Jev closed questions about `description` and wait for its answers.
+
+        `questions` maps each name to a question as Jev's API takes it, such as
+        ``{"type": "noul", "instructions": "Is it human?"}``; Jev answers under the same names.
+        """
         form = wire.jev_form(model, description=description, questions=questions)
         r = self._call(form, tag)
         return JevReply(r["answers"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"])

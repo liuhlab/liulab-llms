@@ -16,8 +16,8 @@ It prints the address it serves, `http://127.0.0.1:8000` unless you pass `--port
 with Ctrl-C.
 
 To call real models, it needs the provider keys. Set them before you start it, under the
-names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Without a key, calls
-to that provider fail.
+names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Jev's key goes in
+`TYPESAFE_API_KEY`. Without a key, calls to that provider fail.
 
 ## Point the library at it
 

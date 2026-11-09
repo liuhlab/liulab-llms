@@ -233,7 +233,8 @@ def test_every_answer_is_stamped(task: Task) -> None:
 
     def split_and_judge(u: Unit) -> Any:
         answer = split(u)
-        u.jev("judge", description=u.inputs.data, questions=["Is it a colour?"])
+        colour = {"type": "noul", "instructions": "Is it a colour?"}
+        u.jev("judge", description=u.inputs.data, questions={"colour": colour})
         return answer
 
     k = kind(

@@ -1,7 +1,7 @@
 """Start the gateway: ``python -m labllm.server [--settings FILE] [--port N] [--throwaway]``.
 
 Provider keys come from the environment, under the names LiteLLM reads, such as
-``DEEPSEEK_API_KEY``.
+``DEEPSEEK_API_KEY``, and ``TYPESAFE_API_KEY`` for Jev.
 """
 
 import argparse
@@ -13,6 +13,7 @@ from types import FrameType
 
 from labllm.server import Prices, Record, Server
 from labllm.server.chat import LiteLLMChat
+from labllm.server.jev import TypeSafeJev
 from labllm.server.settings import load
 from labllm.server.throwaway import throwaway_database
 
@@ -40,9 +41,8 @@ def main(argv: list[str] | None = None) -> None:
             conninfo = stack.enter_context(throwaway_database())
         record = stack.enter_context(Record(conninfo))
         prices = Prices(settings.prices)
-        server = Server(
-            record, prices, {"chat": LiteLLMChat(prices)}, peak_margin_s=settings.peak_margin_s
-        )
+        providers = {"chat": LiteLLMChat(prices), "jev": TypeSafeJev(prices)}
+        server = Server(record, prices, providers, peak_margin_s=settings.peak_margin_s)
         httpd = server.http(args.host, args.port)
         stack.callback(httpd.server_close)
         host, port = httpd.server_address[:2]
