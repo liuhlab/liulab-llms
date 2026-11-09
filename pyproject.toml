@@ -18,7 +18,8 @@ classifiers = [
 ]
 # hatch-vcs reads the newest git tag. Never add a `version` key.
 dynamic = ["version"]
-dependencies = []
+# Pure Python with no dependencies of its own: it checks answers against a kind's schema.
+dependencies = ["fastjsonschema>=2.21"]
 
 # ============================== build ==============================
 
@@ -57,6 +58,7 @@ vale = "3.19.0.*"
 markdownlint-cli2 = "*"
 # For conformance, which parses mkdocs.yml and runs in `default`.
 pyyaml = "*"
+python-fastjsonschema = ">=2.21"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"

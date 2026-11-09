@@ -34,6 +34,32 @@ Two things about that marker are easy to get backwards:
 
 ::: labllm.client.JevReply
 
+## Passes over many units
+
+::: labllm.engine.UnitKind
+
+::: labllm.engine.Role
+
+::: labllm.engine.Inputs
+
+::: labllm.engine.Held
+
+::: labllm.engine.Unit
+
+::: labllm.engine.Task
+
+::: labllm.engine.PassResult
+
+::: labllm.state.Outcome
+
+::: labllm.state.CheckResult
+
+::: labllm.state.Stamp
+
+::: labllm.state.TaskInUse
+
+::: labllm.state.UnknownLayout
+
 ## Errors
 
 ::: labllm.errors

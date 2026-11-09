@@ -1,0 +1,380 @@
+"""The engine, through its public interface, over `labllm.testing.FakeGateway`."""
+
+import json
+import os
+import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import labllm
+from labllm import Held, Inputs, Model, Role, Task, TaskInUse, Unit, UnitKind, UnknownLayout
+from labllm.testing import FakeGateway, Price
+
+WRITER = Model("openai", "test-writer", max_output_tokens=50)
+PRICES = {WRITER.name: Price(input_usd_per_token=0.0, output_usd_per_token=0.001)}
+SCHEMA = {
+    "type": "object",
+    "properties": {"words": {"type": "array", "items": {"type": "string"}}},
+    "required": ["words"],
+    "additionalProperties": False,
+}
+TEXTS = {"a": "red green", "b": "blue", "c": "one two three"}
+
+
+def split_words(form: dict[str, Any]) -> str:
+    """Plays the writer: splits the user message into words."""
+    return json.dumps({"words": form["messages"][-1]["content"].split()})
+
+
+def loader(texts: dict[str, str]) -> Any:
+    def load(key: str) -> Inputs:
+        return Inputs(texts[key], tag=f"text={texts[key]}")
+
+    return load
+
+
+def split(u: Unit) -> Any:
+    return json.loads(u.chat("writer", user=u.inputs.data, schema=SCHEMA).text)
+
+
+def kind(texts: dict[str, str] = TEXTS, **changes: Any) -> UnitKind:
+    """The test's kind: split a text into words. `changes` replaces any of its fields."""
+    fields: dict[str, Any] = {
+        "name": "split",
+        "version": "1",
+        "roles": {"writer": Role("chat", "splits a text into words")},
+        "load": loader(texts),
+        "run": split,
+        "answer_schema": SCHEMA,
+        "answer_checks": (),
+    }
+    return UnitKind(**{**fields, **changes})
+
+
+@pytest.fixture
+def fake() -> FakeGateway:
+    return FakeGateway(split_words, prices=PRICES)
+
+
+@pytest.fixture
+def task(tmp_path: Path, fake: FakeGateway) -> Iterator[Task]:
+    with Task(tmp_path / "task", gateway=fake.client(), reviews=tmp_path / "reviews") as t:
+        yield t
+
+
+def run(task: Task, k: UnitKind, keys: list[str], **options: Any) -> Any:
+    return task.run_pass(
+        k, keys, models={"writer": WRITER}, ceiling_usd=1.0, label="split", **options
+    )
+
+
+def test_a_returned_answer_with_no_failed_check_is_settled(task: Task) -> None:
+    run(task, kind(), ["a", "b"])
+    current = task.current(kind(), "a")
+    assert current is not None
+    assert (current.ending, current.answer) == ("settled", {"words": ["red", "green"]})
+
+
+def at_most_two(inputs: Inputs, answer: Any) -> str | None:
+    return None if len(answer["words"]) <= 2 else f"{len(answer['words'])} words"
+
+
+def test_a_failed_check_leaves_the_answer_unsettled(task: Task) -> None:
+    def split_and_check(u: Unit) -> Any:
+        answer = split(u)
+        u.check("has_words", None if answer["words"] else "no words")
+        return answer
+
+    k = kind(run=split_and_check, answer_checks=(at_most_two,))
+    run(task, k, ["a", "c"])
+    a, c = task.current(k, "a"), task.current(k, "c")
+    assert a is not None
+    assert c is not None
+    assert a.ending == "settled"
+    assert (c.ending, c.answer) == ("unsettled", {"words": ["one", "two", "three"]})
+    assert [(x.name, x.passed, x.message) for x in c.checks] == [
+        ("has_words", True, None),
+        ("at_most_two", False, "3 words"),
+    ]
+
+
+def test_every_checks_result_is_kept_per_unit_per_pass(task: Task) -> None:
+    run(task, kind(answer_checks=(at_most_two,)), ["c"])
+    shorter = kind({"c": "one two"}, answer_checks=(at_most_two,))
+    run(task, shorter, ["c"])
+    first, second = task.outcomes(shorter, "c")
+    assert (first.ending, [x.message for x in first.checks]) == ("unsettled", ["3 words"])
+    assert (second.ending, [x.message for x in second.checks]) == ("settled", [None])
+
+
+def test_refuse_ends_the_unit_refused_with_no_answer(task: Task) -> None:
+    def refuse_long(u: Unit) -> Any:
+        answer = split(u)
+        if len(answer["words"]) > 2:
+            u.refuse("short", "too long to split")
+        return answer
+
+    k = kind(run=refuse_long)
+    result = run(task, k, ["a", "c"])
+    c = task.current(k, "c")
+    assert c is not None
+    assert (c.ending, c.answer, c.reason) == ("refused", None, "too long to split")
+    assert [(x.name, x.message) for x in c.checks] == [("short", "too long to split")]
+    assert (result.counts["settled"], result.counts["refused"]) == (1, 1)
+
+
+def test_settle_ends_the_unit_from_code_alone(task: Task, fake: FakeGateway) -> None:
+    def one_word(u: Unit) -> Any:
+        if " " not in u.inputs.data:
+            u.settle({"words": [u.inputs.data]})
+        return split(u)
+
+    k = kind(run=one_word, answer_checks=(at_most_two,))
+    run(task, k, ["b"])
+    b = task.current(k, "b")
+    assert b is not None
+    assert (b.ending, b.answer, b.checks) == ("settled", {"words": ["blue"]}, ())
+    assert fake.record == []
+
+
+def test_a_held_unit_records_its_reason_and_changes_nothing(task: Task) -> None:
+    run(task, kind(), ["a"])
+
+    def not_yet(key: str) -> Inputs:
+        raise Held("the text is not downloaded yet")
+
+    held = kind(load=not_yet)
+    result = run(task, held, ["a"])
+    assert result.counts["held"] == 1
+    assert task.outcomes(held, "a")[-1].reason == "the text is not downloaded yet"
+    current = task.current(held, "a")
+    assert current is not None
+    assert (current.ending, current.stamp.pass_id) == ("settled", 1)
+
+
+def test_an_error_in_the_kind_ends_that_unit_unfinished_and_the_pass_goes_on(task: Task) -> None:
+    def fails_on_b(u: Unit) -> Any:
+        if u.key == "b":
+            raise RuntimeError("a bug in the kind")
+        return split(u)
+
+    k = kind(run=fails_on_b)
+    result = run(task, k, ["a", "b", "c"])
+    assert (result.counts["settled"], result.counts["unfinished"]) == (2, 1)
+    (b,) = task.outcomes(k, "b")
+    assert b.ending == "unfinished"
+    assert "RuntimeError: a bug in the kind" in (b.reason or "")
+    assert task.current(k, "b") is None
+    assert result.stopped is None
+
+
+def test_an_answer_that_does_not_fit_the_schema_ends_the_unit_unfinished(task: Task) -> None:
+    k = kind(run=lambda u: {"words": split(u)["words"], "extra": 1})
+    result = run(task, k, ["a"])
+    (a,) = task.outcomes(k, "a")
+    assert (result.counts["unfinished"], a.answer) == (1, None)
+    assert "does not fit the answer schema" in (a.reason or "")
+
+
+def test_a_pass_returns_counts_and_its_meters_totals(task: Task) -> None:
+    def not_c(key: str) -> Inputs:
+        if key == "c":
+            raise Held("later")
+        return loader(TEXTS)(key)
+
+    k = kind(load=not_c)
+    run(task, k, ["a"])
+    result = run(task, k, ["b", "a", "c"])
+    assert result.counts == {"settled": 2, "unsettled": 0, "refused": 0, "unfinished": 0, "held": 1}
+    assert result.stopped is None
+    assert (result.requests, result.cache_hits) == (2, 1)
+    # One output token per reply character: '{"words": ["blue"]}' is 19, red green's is 27.
+    assert result.spent_usd == pytest.approx(0.019)
+    assert result.first_cost_usd == pytest.approx(0.019 + 0.027)
+
+
+def test_a_pass_runs_units_in_the_order_given_under_one_meter(
+    task: Task, fake: FakeGateway
+) -> None:
+    result = run(task, kind(), ["c", "a", "b"])
+    assert [(x.tag, x.meter, x.label) for x in fake.record] == [
+        ("c", result.meter, "split"),
+        ("a", result.meter, "split"),
+        ("b", result.meter, "split"),
+    ]
+
+
+def test_every_answer_is_stamped(task: Task) -> None:
+    judge = Model("typesafe", "test-judge", max_output_tokens=50)
+
+    def split_and_judge(u: Unit) -> Any:
+        answer = split(u)
+        u.jev("judge", description=u.inputs.data, questions=["Is it a colour?"])
+        return answer
+
+    k = kind(
+        version="7",
+        roles={"writer": Role("chat"), "judge": Role("jev", "asks whether it is a colour")},
+        run=split_and_judge,
+    )
+    fake = FakeGateway(
+        lambda form: {"yes": 0.9} if form["route"] == "jev" else split_words(form),
+        prices={**PRICES, judge.name: Price(0.0, 0.001)},
+    )
+    with Task(task.folder / "other", gateway=fake.client(), reviews=task.reviews) as t:
+        result = t.run_pass(
+            k, ["a"], models={"writer": WRITER, "judge": judge}, ceiling_usd=1.0, label="x"
+        )
+        a = t.current(k, "a")
+    head = subprocess.run(
+        ["git", "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert a is not None
+    s = a.stamp
+    assert (s.kind, s.kind_version, s.inputs_tag) == ("split", "7", "text=red green")
+    assert s.models == {"writer": WRITER, "judge": judge}
+    assert (s.pass_id, s.meter) == (result.pass_id, result.meter)
+    assert head in s.repo_version
+    assert s.labllm_version == labllm.__version__
+
+
+def test_the_current_answer_is_from_the_latest_pass_that_reached_an_ending(task: Task) -> None:
+    longer = {"a": "red green blue", "b": "blue", "c": "one two three"}
+    run(task, kind(answer_checks=(at_most_two,)), ["a", "b", "c"])  # pass 1: a settled
+    run(task, kind(longer, answer_checks=(at_most_two,)), ["a"])  # pass 2: a unsettled
+
+    def broken(u: Unit) -> Any:
+        raise RuntimeError("down")
+
+    k = kind(run=broken)
+    run(task, k, ["a"])  # pass 3: a unfinished
+    a = task.current(k, "a")
+    assert a is not None
+    assert (a.ending, a.stamp.pass_id, a.answer) == (
+        "unsettled",
+        2,
+        {"words": ["red", "green", "blue"]},
+    )
+    assert task.keys(k, endings=["unsettled", "refused"]) == ["a", "c"]
+    assert task.keys(k, endings=["settled"]) == ["b"]
+    with pytest.raises(ValueError, match="not endings"):
+        task.keys(k, endings=["unfinished"])
+
+
+def test_a_stop_ends_the_remaining_units_unfinished_with_the_reason(task: Task) -> None:
+    result = task.run_pass(
+        kind(), ["a", "b", "c"], models={"writer": WRITER}, ceiling_usd=0.06, label="small"
+    )
+    assert result.stopped == "ceiling_reached"
+    assert result.counts["settled"] == 1
+    assert result.counts["unfinished"] == 2
+    assert all(o.ending == "unfinished" for key in "bc" for o in task.outcomes(kind(), key))
+    (c,) = task.outcomes(kind(), "c")
+    assert "ceiling_reached" in (c.reason or "")
+
+
+def test_rerunning_after_deleting_the_state_file_rebuilds_the_answers_from_the_cache(
+    tmp_path: Path, fake: FakeGateway
+) -> None:
+    def answers(t: Task) -> dict[str, Any]:
+        return {key: (o.ending, o.answer) for key in TEXTS if (o := t.current(kind(), key))}
+
+    with Task(tmp_path / "t", gateway=fake.client(), reviews=tmp_path / "r") as t:
+        run(t, kind(), list(TEXTS))
+        before = answers(t)
+    t.path.unlink()
+    with Task(tmp_path / "t", gateway=fake.client(), reviews=tmp_path / "r") as t:
+        result = run(t, kind(), list(TEXTS))
+        assert answers(t) == before
+    assert (result.requests, result.cache_hits, result.spent_usd) == (3, 3, 0.0)
+
+
+def test_a_state_file_of_an_unknown_layout_is_refused(tmp_path: Path, fake: FakeGateway) -> None:
+    with open_task(tmp_path, fake) as t:
+        run(t, kind(), ["a"])
+    with sqlite3.connect(t.path) as db:  # what a newer liulab-llms would leave
+        db.execute("PRAGMA user_version = 99")
+    db.close()
+    with pytest.raises(UnknownLayout, match="layout 99, newer than layout 1"):
+        open_task(tmp_path, fake)
+    t.path.write_text("not a database")
+    with pytest.raises(UnknownLayout, match="not a task's state file"):
+        open_task(tmp_path, fake)
+    t.path.unlink()
+    open_task(tmp_path, fake).close()  # the refusals left nothing holding the task
+
+
+#: Holds a task from another process until stdin closes. A line "pass" makes it try a pass.
+HOLD = """
+import sys
+from labllm import Inputs, Model, Role, Task, TaskInUse, UnitKind
+from labllm.testing import FakeGateway
+
+task = Task(sys.argv[1], gateway=FakeGateway(str, prices={}).client(), reviews=sys.argv[2])
+print("ready", flush=True)
+for line in sys.stdin:
+    k = UnitKind("k", "1", {}, lambda key: Inputs(key, key), lambda u: None, {})
+    try:
+        task.run_pass(k, [], models={}, ceiling_usd=1.0, label="late")
+        print("ran", flush=True)
+    except TaskInUse as e:
+        print("refused:", e, flush=True)
+"""
+
+
+@pytest.fixture
+def holder(tmp_path: Path) -> Iterator[subprocess.Popen[str]]:
+    """Another process holding the task at `tmp_path / "task"`."""
+    args = [sys.executable, "-c", HOLD, str(tmp_path / "task"), str(tmp_path / "reviews")]
+    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as p:
+        assert p.stdout is not None
+        assert p.stdout.readline() == "ready\n"
+        yield p
+        p.kill()
+
+
+def open_task(tmp_path: Path, fake: FakeGateway) -> Task:
+    return Task(tmp_path / "task", gateway=fake.client(), reviews=tmp_path / "reviews")
+
+
+def test_a_second_process_is_refused_with_the_holder_named(
+    holder: subprocess.Popen[str], tmp_path: Path, fake: FakeGateway
+) -> None:
+    with pytest.raises(TaskInUse) as refused:
+        open_task(tmp_path, fake)
+    assert f"process {holder.pid} on {socket.gethostname()}" in str(refused.value)
+    assert holder.stdin is not None
+    holder.stdin.close()
+    assert holder.wait() == 0
+    open_task(tmp_path, fake).close()
+
+
+def test_a_crashed_holder_does_not_keep_the_task(
+    holder: subprocess.Popen[str], tmp_path: Path, fake: FakeGateway
+) -> None:
+    holder.kill()
+    holder.wait()
+    open_task(tmp_path, fake).close()
+
+
+def test_a_holder_that_stopped_beating_is_taken_over_and_loses_its_hold(
+    holder: subprocess.Popen[str], tmp_path: Path, fake: FakeGateway
+) -> None:
+    holder.send_signal(signal.SIGSTOP)
+    long_ago = time.time() - 3600
+    os.utime(tmp_path / "task" / "state.holder", (long_ago, long_ago))
+    with open_task(tmp_path, fake):
+        holder.send_signal(signal.SIGCONT)
+        assert holder.stdin is not None
+        assert holder.stdout is not None
+        holder.stdin.write("pass\n")
+        holder.stdin.flush()
+        assert holder.stdout.readline().startswith(f"refused: {tmp_path / 'task'} is now held")
