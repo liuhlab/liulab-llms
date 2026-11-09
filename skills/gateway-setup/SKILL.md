@@ -1,6 +1,6 @@
 ---
 name: gateway-setup
-description: Set up, upgrade, restore or tear down the lab gateway's VM, or add a lab member's tunnel key. Use for any change to the deployed gateway.
+description: Set up, upgrade, restore or tear down the lab gateway's VM, move its LiteLLM pin, or add a provider key or a lab member's tunnel key. Use for any change to the deployed gateway.
 ---
 
 # The gateway's VM
@@ -24,8 +24,8 @@ the current deployment, is [gcp.md](gcp.md).
 - **Public repo.** In the repo, a commit or an issue, write placeholders: `<project>`,
   `<bucket>`, `<zone>`, `<region>`, `<instance>`, `<gateway-ip>`. Never a host, an IP
   address, a person's user name, a key path or the project ID.
-- **Provider keys** travel from the admin's environment to the VM's root-only file through
-  standard input. Never print one, echo it, or put it on a command line. Check that a key
+- **Provider keys** travel from the admin's environment, or a mode-600 file the admin typed
+  them into, to the VM's root-only file through standard input. Never print one, echo it, or put it on a command line. Check that a key
   exists by name only:
   `printenv | cut -d= -f1 | grep -E '^(DEEPSEEK|TYPESAFE|OPENAI|ANTHROPIC)_API_KEY$'`.
 - `ssh llm-gateway` is the admin's full shell: SkyPilot's SSH entry on the admin's machine.
@@ -55,6 +55,18 @@ After first setup and after every rebuild, since a new VM has a new boot disk:
 env | grep -E '^(DEEPSEEK|TYPESAFE|OPENAI|ANTHROPIC)_API_KEY=' |
   ssh llm-gateway 'sudo sh -c "umask 077 && cat > /etc/labllm/keys.env" && sudo systemctl restart labllm-gateway'
 ```
+
+To add or replace one key and keep the others (OpenAI's here; change all three names for
+another). The file is swapped in only if it holds the key:
+
+```bash
+grep '^OPENAI_API_KEY=' <key file> | ssh llm-gateway 'sudo sh -c "umask 077 &&
+  { grep -v ^OPENAI_API_KEY= /etc/labllm/keys.env; cat; } > /etc/labllm/keys.env.new &&
+  grep -q ^OPENAI_API_KEY=. /etc/labllm/keys.env.new &&
+  mv /etc/labllm/keys.env.new /etc/labllm/keys.env" && sudo systemctl restart labllm-gateway'
+```
+
+Then delete the key file.
 
 ## Add a lab member's key
 
@@ -111,6 +123,21 @@ ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
 
 Then run "Check it works": a call answered before the dump comes back as a hit. Drop
 `labllm_before_restore` once the admin agrees.
+
+## Move the LiteLLM pin
+
+Only when ADR 0006 says it moves: for a model or fix the gateway needs, or an advisory
+against the pin.
+
+1. Take the newest final release uploaded at least a week ago and not yanked:
+   `https://pypi.org/pypi/litellm/json` lists each one's upload time and yank flag.
+2. No advisory names it: OSV answers `{}` to
+   `curl -s -X POST https://api.osv.dev/v1/query -d '{"package":{"name":"litellm","ecosystem":"PyPI"},"version":"<version>"}'`.
+3. At its tag, re-check the points in
+   [the call layer's research resolution](https://github.com/liuhlab/liulab-llms/issues/2)
+   and the price-table entries of the providers the gateway uses.
+4. In `pyproject.toml`, move the pin and re-check the pins whose comments name the pinned
+   LiteLLM. Then `pixi lock`, `pixi run check`, cut a release, and "Upgrade".
 
 ## Upgrade
 
