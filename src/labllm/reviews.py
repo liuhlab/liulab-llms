@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from labllm.engine import UnitKind
 
 
-_NO_ANSWER: Any = object()
+#: The default of `answer` in a save: none given, as for a drop.
+NO_ANSWER: Any = object()
 
 
 class ChecksFailed(ValueError):  # noqa: N818 - the name callers catch
@@ -91,7 +92,7 @@ class Reviews:
         *,
         who: str,
         inputs_tag: str,
-        answer: Any = _NO_ANSWER,
+        answer: Any = NO_ANSWER,
         drop: bool = False,
         note: str = "",
         overrides: Mapping[str, str] | None = None,
@@ -118,7 +119,7 @@ class Reviews:
         Held
             The unit's inputs are not there.
         """
-        if drop != (answer is _NO_ANSWER):
+        if drop != (answer is NO_ANSWER):
             raise ValueError("give an answer or drop=True, not both or neither")
         if drop and not note:
             raise ValueError("a drop needs a note giving its reason")
@@ -137,8 +138,8 @@ class Reviews:
             )
         checks: tuple[CheckResult, ...] = ()
         if not drop:
-            answer = json.loads(kind._fit(answer))
-            checks = tuple(CheckResult(c.__name__, c(inputs, answer)) for c in kind.answer_checks)
+            text, checks = kind.fit(answer, inputs)
+            answer = json.loads(text)
             if failed := tuple(c for c in checks if not c.passed and c.name not in overrides):
                 raise ChecksFailed(failed)
         review = Review(
@@ -167,7 +168,7 @@ class Reviews:
         """
         return list(self._load(kind).reviews)
 
-    def _by_key(self, kind: "UnitKind") -> dict[str, tuple[Review, ...]]:
+    def by_unit(self, kind: "UnitKind") -> dict[str, tuple[Review, ...]]:
         """Return each unit's reviews, oldest first: by time, then by file order."""
         return self._load(kind).by_key
 
@@ -199,7 +200,7 @@ class _Read:
     by_key: dict[str, tuple[Review, ...]]
 
 
-def _holding(reviews: tuple[Review, ...], inputs_tag: str | None) -> Review | None:
+def holding(reviews: tuple[Review, ...], inputs_tag: str | None) -> Review | None:
     """Return the newest of `reviews`, oldest first, made for `inputs_tag`, if any."""
     for review in reversed(reviews):
         if review.inputs_tag == inputs_tag:

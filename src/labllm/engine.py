@@ -21,7 +21,7 @@ from labllm.client import ChatReply, Gateway, JevReply, Meter
 from labllm.clock import Clock
 from labllm.errors import Rejected, Stopped
 from labllm.model import Model
-from labllm.reviews import _NO_ANSWER, Review, Reviews, _holding
+from labllm.reviews import NO_ANSWER, Review, Reviews, holding
 from labllm.state import (
     ENDINGS,
     NOT_ENDINGS,
@@ -93,14 +93,25 @@ class UnitKind:
         validate = fastjsonschema.compile(self.answer_schema, use_default=False)
         object.__setattr__(self, "_validate", validate)
 
-    def _fit(self, answer: Any) -> str:
-        """Return the answer as JSON, or raise if it does not fit the answer schema."""
+    def fit(self, answer: Any, inputs: Inputs | None = None) -> tuple[str, tuple[CheckResult, ...]]:
+        """Return `answer` as JSON, and each answer check's result on it if `inputs` are given.
+
+        The checks see the answer as read back from its JSON, as it is stored.
+
+        Raises
+        ------
+        ValueError
+            The answer does not fit the answer schema.
+        """
         text = json.dumps(answer, ensure_ascii=False, allow_nan=False)
+        stored = json.loads(text)
         try:
-            self._validate(json.loads(text))
+            self._validate(stored)
         except fastjsonschema.JsonSchemaValueException as e:
             raise ValueError(f"the answer does not fit the answer schema: {e.message}") from e
-        return text
+        if inputs is None:
+            return text, ()
+        return text, tuple(CheckResult(c.__name__, c(inputs, stored)) for c in self.answer_checks)
 
 
 class _Settle(BaseException):
@@ -521,17 +532,16 @@ class Task:
             try:
                 answer = kind.run(unit)
             except _Settle as s:
-                ended.answer_json = kind._fit(s.answer)
+                ended.answer_json, _ = kind.fit(s.answer)
                 failed = any(not c.passed for c in ended.checks)
                 ended.ending = "unsettled" if failed else "settled"
             except _Refuse as r:
                 unit.check(r.name, r.message)
                 ended.ending, ended.reason = "refused", r.message
             else:
-                ended.answer_json = kind._fit(answer)
-                stored = json.loads(ended.answer_json)
-                for check in kind.answer_checks:
-                    unit.check(check.__name__, check(inputs, stored))
+                ended.answer_json, results = kind.fit(answer, inputs)
+                for result in results:
+                    unit.check(result.name, result.message)
                 failed = any(not c.passed for c in ended.checks)
                 ended.ending = "unsettled" if failed else "settled"
         except Held as h:
@@ -560,7 +570,7 @@ class Task:
         outcome = self._state.current(kind.name, key)
         if outcome is None:
             return None
-        review = _holding(self._reviews._by_key(kind).get(key, ()), outcome.stamp.inputs_tag)
+        review = holding(self._reviews.by_unit(kind).get(key, ()), outcome.stamp.inputs_tag)
         if review is None:
             return outcome
         return dataclasses.replace(
@@ -578,7 +588,7 @@ class Task:
         key: str,
         *,
         who: str,
-        answer: Any = _NO_ANSWER,
+        answer: Any = NO_ANSWER,
         drop: bool = False,
         note: str = "",
         overrides: Mapping[str, str] | None = None,
@@ -624,17 +634,17 @@ class Task:
         wanted = set(endings)
         if unknown := wanted - set(ENDINGS):
             raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
-        reviews = self._reviews._by_key(kind)
+        reviews = self._reviews.by_unit(kind)
         keys = []
         for key, ending, tag in self._state.latest(kind.name):
-            review = _holding(reviews.get(key, ()), tag)
+            review = holding(reviews.get(key, ()), tag)
             if (ending if review is None else review.ending) in wanted:
                 keys.append(key)
         return keys
 
     def review_queue(self, kind: UnitKind) -> list[QueueEntry]:
         """Return every unit whose current answer is unsettled or refused, in key order."""
-        reviews = self._reviews._by_key(kind)
+        reviews = self._reviews.by_unit(kind)
         queue = []
         for key in self.keys(kind, endings=("unsettled", "refused")):
             outcomes = self._state.outcomes(kind.name, key)
