@@ -2,7 +2,7 @@
 #
 # Hand-written on purpose: zensical has no `gh-deploy` and none is planned, so the two
 # halves are spelled out — build into `./site`, then force-push that directory to
-# `gh-pages`. See `docs/adr/0001-docs-site-on-zensical.md`.
+# `gh-pages`.
 #
 # The pull request already builds the site (the `docs` job in `ci.yml`). This workflow adds
 # only the publish, so it runs on `main` and nowhere else.

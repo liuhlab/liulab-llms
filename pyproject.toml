@@ -1,8 +1,8 @@
 # ============================== project ==============================
 
 [project]
-name = "liulab-newpkg"
-description = "One line: what this repo is for. `init-repo` rewrites this."
+name = "liulab-llms"
+description = "Runs language-model work over many independent units unattended, with a response cache on disk and a spend ceiling."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13"
@@ -18,10 +18,7 @@ classifiers = [
 ]
 # hatch-vcs reads the newest git tag. Never add a `version` key.
 dynamic = ["version"]
-dependencies = ["typer>=0.12"]
-
-[project.scripts]
-newpkg = "newpkg.cli:app"
+dependencies = []
 
 # ============================== build ==============================
 
@@ -34,7 +31,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/newpkg"]
+packages = ["src/labllm"]
 
 # ============================== pixi ==============================
 
@@ -43,7 +40,7 @@ channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.pypi-dependencies]
-liulab-newpkg = { path = ".", editable = true }
+liulab-llms = { path = ".", editable = true }
 
 # The interpreter. `requires-python` is the floor, and conformance holds every other Python
 # version this repo declares to it.
@@ -51,7 +48,6 @@ liulab-newpkg = { path = ".", editable = true }
 # conda-forge rather than PyPI.
 [tool.pixi.dependencies]
 python = "3.13.*"
-typer = ">=0.12"
 ruff = "*"
 # Exact: Pylance is pyright, so the editor and CI must give one verdict.
 pyright = "==1.1.411"
@@ -75,13 +71,9 @@ mkdocstrings-python = ">=2.0.7,<3"
 
 # On the feature, so these resolve in the `docs` environment with no `-e` flag.
 # `serve` ignores `--strict` and says so, hence its absence.
-#
-# `-f mkdocs.template.yml` is TEMPLATE-ONLY. That file inherits `mkdocs.yml` and overrides the
-# identity keys, so this repo's site is named for itself while the shipped config keeps the
-# placeholder. `init-repo` deletes the file and takes the flag off both lines below.
 [tool.pixi.feature.docs.tasks]
-docs = "zensical serve -f mkdocs.template.yml"
-docs-build = "zensical build -f mkdocs.template.yml --clean --strict"
+docs = "zensical serve"
+docs-build = "zensical build --clean --strict"
 
 # `default` takes `test` so pyright can resolve pytest, and not `docs`, which exists so that
 # exactly one CI job installs it.
@@ -106,11 +98,6 @@ conformance = "python scripts/conformance.py"
 # The static step list lives here and nowhere else; `check.sh` takes it as arguments.
 check-static = "bash scripts/check.sh lint fmt-check typecheck vale markdownlint conformance"
 check = { depends-on = ["check-static", "test"] }
-# init-repo:begin dogfood
-# Markers read by `scripts/init_repo.py`, which deletes this block and its twin in ci.yml.
-# Template-only, and not a step of `check`: it installs three environments and takes minutes.
-dogfood = "python scripts/dogfood.py"
-# init-repo:end dogfood
 
 # ============================== ruff ==============================
 

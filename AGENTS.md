@@ -1,10 +1,10 @@
-# liulab-newpkg
+# liulab-llms
 
 > **Replace this file.** This is the template's generic copy: it says how *any* Liu Lab repo
 > works, not what *this* one does. Run `/init`, then delete this line.
 
 One paragraph: what this package is for, who uses it, and the one thing that is easy to get
-wrong. Distribution name **`liulab-newpkg`**, import name **`newpkg`**.
+wrong. Distribution name **`liulab-llms`**, import name **`labllm`**.
 
 ## Restraint
 
@@ -36,7 +36,7 @@ misfires, is as much a contribution as adding one.
 ## Layout
 
 ```text
-src/newpkg/       the package — rename this directory first
+src/labllm/       the package — rename this directory first
 tests/            pytest, mirroring src/
 docs/             the published site; docs/adr/ and docs/agents/ are agent-facing
 skills/           repo-local agent skills; `python skills/install.py --help`

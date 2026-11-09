@@ -107,28 +107,3 @@ jobs:
       # a green run here is not a claim the site has no dead ends. This job builds the
       # site and stops; publishing it is `docs.yml`, on `main`.
       - run: pixi run docs-build
-
-  # init-repo:begin dogfood
-  # ------------------------------------------------------------------------------------
-  # TEMPLATE-ONLY, and the last job on purpose. `scripts/init_repo.py` deletes everything
-  # between these two markers, and the matching block in `pyproject.toml`. A workflow file
-  # every repo keeps cannot hold a template-only job that is deletable by path, so it is a
-  # delimited TRAILING block instead — which keeps removing it mechanical rather than YAML
-  # surgery, and means nothing generic can end up below it.
-  #
-  # No `needs:`, so it runs beside the other four rather than after them. Its body is the
-  # `dogfood` task, like every other job here, so the steps live in `pyproject.toml`.
-  # ------------------------------------------------------------------------------------
-  dogfood:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: prefix-dev/setup-pixi@v0.10.2
-        with:
-          environments: default
-          locked: true
-      # Renders all three shapes and runs each rendered repo's own `pixi run check`. It
-      # needs no network beyond this checkout and pixi: every scratch repo is built from
-      # the files already on disk, and each one installs from the lock file it inherited.
-      - run: pixi run dogfood
-  # init-repo:end dogfood

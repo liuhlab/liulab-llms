@@ -1,11 +1,11 @@
 # API reference
 
-Built from the docstrings in `src/newpkg/`, so this page and the code cannot drift apart.
+Built from the docstrings in `src/labllm/`, so this page and the code cannot drift apart.
 Write the docstring; this page follows.
 
 ## The examples are tests
 
-`pixi run check` runs the `Examples` blocks in `src/newpkg/`, so an example that no longer
+`pixi run check` runs the `Examples` blocks in `src/labllm/`, so an example that no longer
 matches its code fails the tests.
 
 Write one where it makes the object easier to use, and leave it out where it would not.
@@ -22,13 +22,6 @@ Two things about that marker are easy to get backwards:
 - A trailing comment written as plain prose looks just like a marker and is not one. Only
   the `# doctest:` form is read as one.
 
-## newpkg
+## labllm
 
-::: newpkg.core.greet
-
-## The command line
-
-The whole module, because typer makes every verb a plain function with a docstring, and
-`newpkg.cli:app` — the object `[project.scripts]` registers — is built from them.
-
-::: newpkg.cli
+::: labllm.core.greet

@@ -2,8 +2,7 @@
 #
 # Every pattern below is drawn from a real hit in a Liu Lab repo. The whole map was run
 # over the README and human-facing docs/ of all six repos: 32 hits, zero false positives.
-# The measurements and the per-pattern evidence are in
-# `docs/research/vale-setup-2026-08-30.md`. Do not add a pattern that has never fired.
+# Do not add a pattern that has never fired.
 #
 # There is deliberately no generic anti-corporate list. The corpus has zero hits for
 # leverage, utilize, facilitate, robust, seamless, ecosystem, paradigm, streamline,
