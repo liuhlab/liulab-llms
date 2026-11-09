@@ -1,0 +1,954 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Calls language models for lab repos through one shared gateway, with a response cache for the whole lab and a spend ceiling.">
+      
+      
+      
+        <link rel="canonical" href="https://liuhlab.github.io/liulab-llms/tutorial/">
+      
+      
+        <link rel="prev" href="./..">
+      
+      
+        <link rel="next" href="../reach-the-gateway/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.57">
+    
+    
+      
+        <title>Write your first unit kind - liulab-llms</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#write-your-first-unit-kind" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="liulab-llms" class="md-header__button md-logo" aria-label="liulab-llms" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            liulab-llms
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Write your first unit kind
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/liuhlab/liulab-llms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    liuhlab/liulab-llms
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="liulab-llms" class="md-nav__button md-logo" aria-label="liulab-llms" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    liulab-llms
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/liuhlab/liulab-llms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    liuhlab/liulab-llms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Write your first unit kind
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Write your first unit kind
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Before you start
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-declare-the-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Declare the kind
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-write-the-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Write the command
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-test-the-first-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        3. Test the first pass
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-move-up-the-ladder" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        4. Move up the ladder
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-review-what-is-left" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        5. Review what is left
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-run-it-on-the-labs-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        6. Run it on the lab's models
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-keep-the-reviews-in-git" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        7. Keep the reviews in git
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reach-the-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reach the lab gateway
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run the gateway
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Before you start
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-declare-the-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Declare the kind
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-write-the-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Write the command
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-test-the-first-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        3. Test the first pass
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-move-up-the-ladder" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        4. Move up the ladder
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-review-what-is-left" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        5. Review what is left
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-run-it-on-the-labs-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        6. Run it on the lab's models
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-keep-the-reviews-in-git" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        7. Keep the reviews in git
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="write-your-first-unit-kind">Write your first unit kind<a class="headerlink" href="#write-your-first-unit-kind" title="Permanent link">&para;</a></h1>
+<p>In this tutorial we build a small unit kind that names the species in a sample's description.
+We test it on a fake gateway, run it, send the samples it could not settle to a stronger
+model, and review the two that are left.</p>
+<p>A <strong>unit</strong> is one independent piece of work, named by a string key: here,
+one sample. A <strong>unit kind</strong> says how to do the work for any unit of that kind. A <strong>pass</strong> runs
+a kind over a list of units and records how each one ended.</p>
+<h2 id="before-you-start">Before you start<a class="headerlink" href="#before-you-start" title="Permanent link">&para;</a></h2>
+<p>You need a repo with pixi and liulab-llms in its environment. Steps 1 to 5 run on the fake
+gateway in <code>labllm.testing</code>, which needs no network and costs nothing. Only step 6 calls real
+models, and for that you need a tunnel to the lab gateway: see
+<a href="../reach-the-gateway/">Reach the lab gateway</a>.</p>
+<h2 id="1-declare-the-kind">1. Declare the kind<a class="headerlink" href="#1-declare-the-kind" title="Permanent link">&para;</a></h2>
+<p>Make a file named <code>species.py</code>, and declare the kind in it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">labllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">Gateway</span><span class="p">,</span> <span class="n">Inputs</span><span class="p">,</span> <span class="n">Model</span><span class="p">,</span> <span class="n">PassResult</span><span class="p">,</span> <span class="n">Role</span><span class="p">,</span> <span class="n">Task</span><span class="p">,</span> <span class="n">Unit</span><span class="p">,</span> <span class="n">UnitKind</span>
+
+<span class="c1">#: Each sample's description. A real kind reads its inputs from the repo's data.</span>
+<span class="n">SAMPLES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"s1"</span><span class="p">:</span> <span class="s2">"Adult mouse cortex, layer 5 neurons"</span><span class="p">,</span>
+    <span class="s2">"s2"</span><span class="p">:</span> <span class="s2">"Human blood cells from a healthy donor"</span><span class="p">,</span>
+    <span class="s2">"s3"</span><span class="p">:</span> <span class="s2">"Zebrafish larva, whole body"</span><span class="p">,</span>
+    <span class="s2">"s4"</span><span class="p">:</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="s2">"s5"</span><span class="p">:</span> <span class="s2">"C57BL/6J liver"</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="n">ANSWER</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"object"</span><span class="p">,</span>
+    <span class="s2">"properties"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"species"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"string"</span><span class="p">}},</span>
+    <span class="s2">"required"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"species"</span><span class="p">],</span>
+    <span class="s2">"additionalProperties"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Inputs</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Return a sample's description, tagged with itself, so an edit changes the tag."""</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">SAMPLES</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">Inputs</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">text</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">name_species</span><span class="p">(</span><span class="n">u</span><span class="p">:</span> <span class="n">Unit</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Ask the reader which species the sample came from."""</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">u</span><span class="o">.</span><span class="n">inputs</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+        <span class="n">u</span><span class="o">.</span><span class="n">refuse</span><span class="p">(</span><span class="s2">"has_text"</span><span class="p">,</span> <span class="s2">"the description is empty"</span><span class="p">)</span>
+    <span class="n">reply</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">chat</span><span class="p">(</span>
+        <span class="s2">"reader"</span><span class="p">,</span>
+        <span class="n">system</span><span class="o">=</span><span class="s1">'Name the species the sample came from. Answer as {"species": "..."}.'</span><span class="p">,</span>
+        <span class="n">user</span><span class="o">=</span><span class="n">u</span><span class="o">.</span><span class="n">inputs</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+        <span class="n">schema</span><span class="o">=</span><span class="n">ANSWER</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">named_in_text</span><span class="p">(</span><span class="n">inputs</span><span class="p">:</span> <span class="n">Inputs</span><span class="p">,</span> <span class="n">answer</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Fail when the description does not contain the species' name."""</span>
+    <span class="k">if</span> <span class="n">answer</span><span class="p">[</span><span class="s2">"species"</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">inputs</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">answer</span><span class="p">[</span><span class="s1">'species'</span><span class="p">]</span><span class="si">!r}</span><span class="s2"> is not in the description"</span>
+
+
+<span class="n">SPECIES</span> <span class="o">=</span> <span class="n">UnitKind</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"species"</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="s2">"1"</span><span class="p">,</span>
+    <span class="n">roles</span><span class="o">=</span><span class="p">{</span><span class="s2">"reader"</span><span class="p">:</span> <span class="n">Role</span><span class="p">(</span><span class="s2">"chat"</span><span class="p">,</span> <span class="s2">"names the species in a description"</span><span class="p">)},</span>
+    <span class="n">load</span><span class="o">=</span><span class="n">load</span><span class="p">,</span>
+    <span class="n">run</span><span class="o">=</span><span class="n">name_species</span><span class="p">,</span>
+    <span class="n">answer_schema</span><span class="o">=</span><span class="n">ANSWER</span><span class="p">,</span>
+    <span class="n">answer_checks</span><span class="o">=</span><span class="p">(</span><span class="n">named_in_text</span><span class="p">,),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The kind has these parts:</p>
+<ul>
+<li><code>load</code> returns a unit's inputs and its <strong>inputs tag</strong>, a string that changes when the inputs
+  change. Here the tag is the description itself. A real <code>load</code> reads your data. If an input
+  is not there yet, it raises <code>Held</code>, and the pass keeps that unit's current answer as it was.</li>
+<li><code>name_species</code> does the work for one unit, <code>u</code>. It asks the model in the <code>reader</code> role and
+  returns the answer. For an empty description it calls <code>u.refuse</code>, which ends the unit with
+  no model call.</li>
+<li><code>ANSWER</code> is a JSON Schema the answer must fit. An answer that does not fit is not kept.</li>
+<li><code>named_in_text</code> is an answer check. It returns <code>None</code> when the answer passes, or a message
+  that says what is wrong.</li>
+<li><code>version</code> is yours to set. Raise it when you change the kind. Every answer records the
+  version that made it.</li>
+</ul>
+<p>Each unit ends in one of four ways, called its <strong>ending</strong>:</p>
+<ul>
+<li><strong>settled</strong>: the unit has an answer, and every check passed.</li>
+<li><strong>unsettled</strong>: the unit has an answer, but a check failed. The answer is kept with the
+  check's message.</li>
+<li><strong>refused</strong>: the kind's code refused the unit. No answer is kept.</li>
+<li><strong>dropped</strong>: a person took the unit out of the work, with a note. Only a review gives it.</li>
+</ul>
+<h2 id="2-write-the-command">2. Write the command<a class="headerlink" href="#2-write-the-command" title="Permanent link">&para;</a></h2>
+<p>Add the models and a command to <code>species.py</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">CHEAP</span> <span class="o">=</span> <span class="n">Model</span><span class="p">(</span><span class="s2">"deepseek"</span><span class="p">,</span> <span class="s2">"deepseek-v4-flash"</span><span class="p">,</span> <span class="n">thinking</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">max_output_tokens</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+<span class="n">STRONG</span> <span class="o">=</span> <span class="n">Model</span><span class="p">(</span><span class="s2">"deepseek"</span><span class="p">,</span> <span class="s2">"deepseek-v4-pro"</span><span class="p">,</span> <span class="n">thinking</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">max_output_tokens</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">first_pass</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PassResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Run the cheaper model over every sample."""</span>
+    <span class="k">return</span> <span class="n">task</span><span class="o">.</span><span class="n">run_pass</span><span class="p">(</span>
+        <span class="n">SPECIES</span><span class="p">,</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">SAMPLES</span><span class="p">),</span> <span class="n">models</span><span class="o">=</span><span class="p">{</span><span class="s2">"reader"</span><span class="p">:</span> <span class="n">CHEAP</span><span class="p">},</span> <span class="n">ceiling_usd</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"species"</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">stronger_pass</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PassResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Run the stronger model over the units left unsettled or refused."""</span>
+    <span class="n">keys</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">keys</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="n">endings</span><span class="o">=</span><span class="p">[</span><span class="s2">"unsettled"</span><span class="p">,</span> <span class="s2">"refused"</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">task</span><span class="o">.</span><span class="n">run_pass</span><span class="p">(</span>
+        <span class="n">SPECIES</span><span class="p">,</span> <span class="n">keys</span><span class="p">,</span> <span class="n">models</span><span class="o">=</span><span class="p">{</span><span class="s2">"reader"</span><span class="p">:</span> <span class="n">STRONG</span><span class="p">},</span> <span class="n">ceiling_usd</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"species, stronger"</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">gateway</span><span class="p">:</span> <span class="n">Gateway</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Run the first pass, or the stronger one with `--stronger`. Return 1 if it stopped."""</span>
+    <span class="k">with</span> <span class="n">Task</span><span class="p">(</span><span class="s2">"work/species"</span><span class="p">,</span> <span class="n">gateway</span><span class="o">=</span><span class="n">gateway</span><span class="p">,</span> <span class="n">reviews</span><span class="o">=</span><span class="s2">"reviews"</span><span class="p">)</span> <span class="k">as</span> <span class="n">task</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">stronger_pass</span><span class="p">(</span><span class="n">task</span><span class="p">)</span> <span class="k">if</span> <span class="n">args</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"--stronger"</span><span class="p">]</span> <span class="k">else</span> <span class="n">first_pass</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">counts</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">stopped</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">1</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">(</span><span class="n">Gateway</span><span class="p">(</span><span class="n">repo</span><span class="o">=</span><span class="s2">"my-repo"</span><span class="p">),</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:]))</span>
+</code></pre></div>
+<p>The command runs one of two passes:</p>
+<ul>
+<li><code>first_pass</code> runs the cheaper model over every sample.</li>
+<li><code>stronger_pass</code> runs the stronger model over only the samples whose current ending is
+  unsettled or refused. Sending a unit to a stronger model in a narrower pass like this is
+  called moving it up the ladder.</li>
+</ul>
+<p><code>Task</code> keeps the work's state in one file in the folder <code>work/species</code>: every pass, and each
+unit's answer and checks. Only one process at a time can open a task. Each pass sends its calls through a <strong>meter</strong> with a <strong>ceiling</strong>:
+the most the pass may spend, in US dollars. The gateway refuses any call that could take the
+meter past it. <code>main</code> returns 1 if the pass stopped early, such as at its ceiling, and 0
+otherwise.</p>
+<h2 id="3-test-the-first-pass">3. Test the first pass<a class="headerlink" href="#3-test-the-first-pass" title="Permanent link">&para;</a></h2>
+<p>Make <code>test_species.py</code> beside <code>species.py</code>. Start it with a fake gateway:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">species</span><span class="w"> </span><span class="kn">import</span> <span class="n">CHEAP</span><span class="p">,</span> <span class="n">SPECIES</span><span class="p">,</span> <span class="n">STRONG</span><span class="p">,</span> <span class="n">main</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">labllm</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChecksFailed</span><span class="p">,</span> <span class="n">Reviews</span><span class="p">,</span> <span class="n">Task</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">labllm.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">FakeGateway</span><span class="p">,</span> <span class="n">Price</span>
+
+<span class="c1">#: What each model answers, by description. The cheaper one gives the zebrafish's Latin name.</span>
+<span class="n">ANSWERS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"Adult mouse cortex, layer 5 neurons"</span><span class="p">:</span> <span class="s2">"mouse"</span><span class="p">,</span>
+    <span class="s2">"Human blood cells from a healthy donor"</span><span class="p">:</span> <span class="s2">"human"</span><span class="p">,</span>
+    <span class="s2">"Zebrafish larva, whole body"</span><span class="p">:</span> <span class="s2">"zebrafish"</span><span class="p">,</span>
+    <span class="s2">"C57BL/6J liver"</span><span class="p">:</span> <span class="s2">"mouse"</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">play_the_models</span><span class="p">(</span><span class="n">form</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">species</span> <span class="o">=</span> <span class="n">ANSWERS</span><span class="p">[</span><span class="n">form</span><span class="p">[</span><span class="s2">"messages"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s2">"content"</span><span class="p">]]</span>
+    <span class="k">if</span> <span class="n">form</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="n">CHEAP</span><span class="o">.</span><span class="n">name</span> <span class="ow">and</span> <span class="n">species</span> <span class="o">==</span> <span class="s2">"zebrafish"</span><span class="p">:</span>
+        <span class="n">species</span> <span class="o">=</span> <span class="s2">"Danio rerio"</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">"species"</span><span class="p">:</span> <span class="n">species</span><span class="p">})</span>
+
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">fake</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">monkeypatch</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">MonkeyPatch</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FakeGateway</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""A fake gateway with made-up prices, and a fresh folder to work in."""</span>
+    <span class="n">monkeypatch</span><span class="o">.</span><span class="n">chdir</span><span class="p">(</span><span class="n">tmp_path</span><span class="p">)</span>
+    <span class="n">prices</span> <span class="o">=</span> <span class="p">{</span><span class="n">CHEAP</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">Price</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1e-6</span><span class="p">),</span> <span class="n">STRONG</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">Price</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1e-5</span><span class="p">)}</span>
+    <span class="k">return</span> <span class="n">FakeGateway</span><span class="p">(</span><span class="n">play_the_models</span><span class="p">,</span> <span class="n">prices</span><span class="o">=</span><span class="n">prices</span><span class="p">)</span>
+</code></pre></div>
+<p><code>play_the_models</code> plays both models. It gets the request a model would get, and returns the
+reply's text. Our fake cheaper model gives the zebrafish's Latin name, so the check fails for
+that sample. The prices are made up. The fixture also moves each test into its own empty
+folder, because the command keeps its files in the folder it runs in.</p>
+<p>Now add a test of the first pass:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_the_first_pass_settles_what_its_check_confirms</span><span class="p">(</span>
+    <span class="n">fake</span><span class="p">:</span> <span class="n">FakeGateway</span><span class="p">,</span> <span class="n">capsys</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">CaptureFixture</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">main</span><span class="p">(</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="p">[])</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">capsys</span><span class="o">.</span><span class="n">readouterr</span><span class="p">()</span><span class="o">.</span><span class="n">out</span>
+    <span class="k">assert</span> <span class="n">out</span> <span class="o">==</span> <span class="s2">"{'settled': 2, 'unsettled': 2, 'refused': 1, 'unfinished': 0, 'held': 0}</span><span class="se">\n</span><span class="s2">"</span>
+    <span class="k">with</span> <span class="n">Task</span><span class="p">(</span><span class="s2">"work/species"</span><span class="p">,</span> <span class="n">gateway</span><span class="o">=</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="n">reviews</span><span class="o">=</span><span class="s2">"reviews"</span><span class="p">)</span> <span class="k">as</span> <span class="n">task</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">task</span><span class="o">.</span><span class="n">keys</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="n">endings</span><span class="o">=</span><span class="p">[</span><span class="s2">"settled"</span><span class="p">])</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"s1"</span><span class="p">,</span> <span class="s2">"s2"</span><span class="p">]</span>
+        <span class="n">s3</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">current</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="s2">"s3"</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">s3</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">assert</span> <span class="n">s3</span><span class="o">.</span><span class="n">answer</span> <span class="o">==</span> <span class="p">{</span><span class="s2">"species"</span><span class="p">:</span> <span class="s2">"Danio rerio"</span><span class="p">}</span>
+    <span class="k">assert</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">message</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">s3</span><span class="o">.</span><span class="n">checks</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"'Danio rerio' is not in the description"</span><span class="p">]</span>
+</code></pre></div>
+<p>Run it:</p>
+<div class="highlight"><pre><span></span><code>pixi<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>test_species.py
+</code></pre></div>
+<p>You see <code>1 passed</code>. The test shows what the command printed: two samples settled, two
+unsettled and one refused. <code>s3</code> is unsettled because "Danio rerio" is not in its
+description. <code>s5</code> is unsettled because "mouse" is not in "C57BL/6J liver". <code>s4</code> is refused,
+since its description is empty.</p>
+<h2 id="4-move-up-the-ladder">4. Move up the ladder<a class="headerlink" href="#4-move-up-the-ladder" title="Permanent link">&para;</a></h2>
+<p>Add a test of the stronger pass:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_the_stronger_pass_runs_only_what_is_left</span><span class="p">(</span>
+    <span class="n">fake</span><span class="p">:</span> <span class="n">FakeGateway</span><span class="p">,</span> <span class="n">capsys</span><span class="p">:</span> <span class="n">pytest</span><span class="o">.</span><span class="n">CaptureFixture</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">(</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="p">[])</span>
+    <span class="k">assert</span> <span class="n">main</span><span class="p">(</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="p">[</span><span class="s2">"--stronger"</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">capsys</span><span class="o">.</span><span class="n">readouterr</span><span class="p">()</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">assert</span> <span class="n">out</span> <span class="o">==</span> <span class="s2">"{'settled': 1, 'unsettled': 1, 'refused': 1, 'unfinished': 0, 'held': 0}"</span>
+    <span class="n">sent</span> <span class="o">=</span> <span class="p">{</span><span class="n">x</span><span class="o">.</span><span class="n">tag</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">fake</span><span class="o">.</span><span class="n">record</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">form</span> <span class="ow">and</span> <span class="n">x</span><span class="o">.</span><span class="n">form</span><span class="p">[</span><span class="s2">"model"</span><span class="p">]</span> <span class="o">==</span> <span class="n">STRONG</span><span class="o">.</span><span class="n">name</span><span class="p">}</span>
+    <span class="k">assert</span> <span class="n">sent</span> <span class="o">==</span> <span class="p">{</span><span class="s2">"s3"</span><span class="p">,</span> <span class="s2">"s5"</span><span class="p">}</span>
+</code></pre></div>
+<p>Run <code>pixi run pytest test_species.py</code> again. You see <code>2 passed</code>.</p>
+<p>The stronger pass took <code>s3</code>, <code>s4</code> and <code>s5</code>, the three units the first pass did not settle.
+The stronger model names the zebrafish, so <code>s3</code> settles. A unit's current answer is the one
+from its latest pass that reached an ending, so <code>s3</code>'s answer is now the stronger model's.
+<code>s5</code> stays unsettled, because its description never says "mouse". <code>s4</code> is refused again
+before any model call, so only <code>s3</code> and <code>s5</code> reached the stronger model.</p>
+<h2 id="5-review-what-is-left">5. Review what is left<a class="headerlink" href="#5-review-what-is-left" title="Permanent link">&para;</a></h2>
+<p>The <strong>review queue</strong> holds every unit whose current answer is unsettled or refused: the units
+a person must look at. A <strong>review</strong> is one person's decision on one unit, either an answer or
+a drop. Add a test that reviews both units left:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_a_person_reviews_what_is_left</span><span class="p">(</span><span class="n">fake</span><span class="p">:</span> <span class="n">FakeGateway</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">(</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="p">[])</span>
+    <span class="n">main</span><span class="p">(</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="p">[</span><span class="s2">"--stronger"</span><span class="p">])</span>
+    <span class="k">with</span> <span class="n">Task</span><span class="p">(</span><span class="s2">"work/species"</span><span class="p">,</span> <span class="n">gateway</span><span class="o">=</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="n">reviews</span><span class="o">=</span><span class="s2">"reviews"</span><span class="p">)</span> <span class="k">as</span> <span class="n">task</span><span class="p">:</span>
+        <span class="n">s4</span><span class="p">,</span> <span class="n">s5</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">review_queue</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="p">(</span><span class="n">s4</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">s4</span><span class="o">.</span><span class="n">ending</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="s2">"s4"</span><span class="p">,</span> <span class="s2">"refused"</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="p">(</span><span class="n">s5</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">s5</span><span class="o">.</span><span class="n">ending</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="s2">"s5"</span><span class="p">,</span> <span class="s2">"unsettled"</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">s5</span><span class="o">.</span><span class="n">failed</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span> <span class="o">==</span> <span class="s2">"'mouse' is not in the description"</span>
+        <span class="k">assert</span> <span class="p">[</span><span class="n">o</span><span class="o">.</span><span class="n">answer</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">s5</span><span class="o">.</span><span class="n">outcomes</span><span class="p">]</span> <span class="o">==</span> <span class="p">[{</span><span class="s2">"species"</span><span class="p">:</span> <span class="s2">"mouse"</span><span class="p">},</span> <span class="p">{</span><span class="s2">"species"</span><span class="p">:</span> <span class="s2">"mouse"</span><span class="p">}]</span>
+
+        <span class="n">task</span><span class="o">.</span><span class="n">save_review</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="s2">"s4"</span><span class="p">,</span> <span class="n">who</span><span class="o">=</span><span class="s2">"ana"</span><span class="p">,</span> <span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">note</span><span class="o">=</span><span class="s2">"the source has no description"</span><span class="p">)</span>
+
+    <span class="n">reviews</span> <span class="o">=</span> <span class="n">Reviews</span><span class="p">(</span><span class="s2">"reviews"</span><span class="p">)</span>
+    <span class="n">mouse</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"species"</span><span class="p">:</span> <span class="s2">"mouse"</span><span class="p">}</span>
+    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="n">ChecksFailed</span><span class="p">):</span>
+        <span class="n">reviews</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="s2">"s5"</span><span class="p">,</span> <span class="n">who</span><span class="o">=</span><span class="s2">"ana"</span><span class="p">,</span> <span class="n">inputs_tag</span><span class="o">=</span><span class="n">s5</span><span class="o">.</span><span class="n">inputs_tag</span><span class="p">,</span> <span class="n">answer</span><span class="o">=</span><span class="n">mouse</span><span class="p">)</span>
+    <span class="n">reviews</span><span class="o">.</span><span class="n">save</span><span class="p">(</span>
+        <span class="n">SPECIES</span><span class="p">,</span>
+        <span class="s2">"s5"</span><span class="p">,</span>
+        <span class="n">who</span><span class="o">=</span><span class="s2">"ana"</span><span class="p">,</span>
+        <span class="n">inputs_tag</span><span class="o">=</span><span class="n">s5</span><span class="o">.</span><span class="n">inputs_tag</span><span class="p">,</span>
+        <span class="n">answer</span><span class="o">=</span><span class="n">mouse</span><span class="p">,</span>
+        <span class="n">overrides</span><span class="o">=</span><span class="p">{</span><span class="s2">"named_in_text"</span><span class="p">:</span> <span class="s2">"C57BL/6J is a mouse strain"</span><span class="p">},</span>
+    <span class="p">)</span>
+
+    <span class="k">with</span> <span class="n">Task</span><span class="p">(</span><span class="s2">"work/species"</span><span class="p">,</span> <span class="n">gateway</span><span class="o">=</span><span class="n">fake</span><span class="o">.</span><span class="n">client</span><span class="p">(),</span> <span class="n">reviews</span><span class="o">=</span><span class="s2">"reviews"</span><span class="p">)</span> <span class="k">as</span> <span class="n">task</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">task</span><span class="o">.</span><span class="n">review_queue</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">)</span> <span class="o">==</span> <span class="p">[]</span>
+        <span class="k">assert</span> <span class="n">task</span><span class="o">.</span><span class="n">keys</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="n">endings</span><span class="o">=</span><span class="p">[</span><span class="s2">"settled"</span><span class="p">])</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"s1"</span><span class="p">,</span> <span class="s2">"s2"</span><span class="p">,</span> <span class="s2">"s3"</span><span class="p">,</span> <span class="s2">"s5"</span><span class="p">]</span>
+        <span class="k">assert</span> <span class="n">task</span><span class="o">.</span><span class="n">keys</span><span class="p">(</span><span class="n">SPECIES</span><span class="p">,</span> <span class="n">endings</span><span class="o">=</span><span class="p">[</span><span class="s2">"dropped"</span><span class="p">])</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"s4"</span><span class="p">]</span>
+</code></pre></div>
+<p>Run <code>pixi run pytest test_species.py</code> again. You see <code>3 passed</code>. The test does four things:</p>
+<ol>
+<li>It reads the queue with <code>task.review_queue</code>. Each entry has the unit's key and ending, the
+   failed checks in <code>failed</code>, and every pass's answer in <code>outcomes</code>.</li>
+<li>It drops <code>s4</code> with <code>task.save_review</code>, with a note giving the reason.</li>
+<li>It saves the answer "mouse" for <code>s5</code> with <code>Reviews</code>. <code>named_in_text</code> fails, so the first save
+   saves nothing and raises <code>ChecksFailed</code>, whose <code>failed</code> lists the failed checks. The second save overrides the check with a
+   reason: C57BL/6J is a mouse strain.</li>
+<li>It opens the task again. The queue is empty, <code>s5</code> is settled, and <code>s4</code> is dropped.</li>
+</ol>
+<p><code>Reviews</code> needs no task. It writes only to the reviews folder, so you can save reviews while
+a pass holds the task. Give it the entry's <code>inputs_tag</code>, the tag of the inputs the person
+reviewed. If the inputs changed since, the save raises <code>ValueError</code>: run a pass, then review
+its new answer. <code>task.save_review</code> finds the tag itself.</p>
+<p>A review outranks the models' answer until the unit's inputs tag changes. Then the unit goes
+back through the models.</p>
+<h2 id="6-run-it-on-the-labs-models">6. Run it on the lab's models<a class="headerlink" href="#6-run-it-on-the-labs-models" title="Permanent link">&para;</a></h2>
+<p>Open your tunnel to the gateway and set <code>LABLLM_GATEWAY</code>, as
+<a href="../reach-the-gateway/">Reach the lab gateway</a> shows. Then run the first pass:</p>
+<div class="highlight"><pre><span></span><code>pixi<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>species.py
+</code></pre></div>
+<p>It prints the count of each ending. Real models may not answer as the fake did, so your
+counts can differ from the test's. Then run the stronger pass:</p>
+<div class="highlight"><pre><span></span><code>pixi<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>species.py<span class="w"> </span>--stronger
+</code></pre></div>
+<p>Run the same command again and the gateway answers every call it has seen from its cache, at
+no cost. That is also how you resume a pass that stopped: run the same command again.</p>
+<p>To review the units left, run the lines of step 5 in a notebook or a script. Use your own
+<code>Gateway</code>, not the fake one, and your own name for <code>who</code>.</p>
+<h2 id="7-keep-the-reviews-in-git">7. Keep the reviews in git<a class="headerlink" href="#7-keep-the-reviews-in-git" title="Permanent link">&para;</a></h2>
+<p>Reviews live in the reviews folder, one file for each kind, such as <code>reviews/species.jsonl</code>.
+Commit that folder. Deleting <code>work/species</code> loses no reviews, and a fresh pass replays the
+models' answers from the gateway's cache.</p>
+<p>Two people may add reviews on two branches at once. Tell git to keep both sides' lines when
+it merges, by adding this line to your repo's <code>.gitattributes</code>, with your folder's path:</p>
+<div class="highlight"><pre><span></span><code>reviews/*.jsonl merge=union
+</code></pre></div>
+<p>When two lines review the same unit, the one saved later wins.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.49251538.min.js"></script>
+      
+    
+  </body>
+</html>
