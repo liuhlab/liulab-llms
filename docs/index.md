@@ -18,7 +18,8 @@ same versions the tests ran on.
 
 Your code never holds a provider key. It talks to the lab gateway through an SSH tunnel you
 open, and finds it from one setting: `LABLLM_GATEWAY`, the tunnel's local address, such as
-`http://127.0.0.1:8000`.
+`http://127.0.0.1:8000`. [Reach the lab gateway](reach-the-gateway.md) shows how to set
+both up.
 
 Open a meter with a dollar ceiling, then call through it:
 
@@ -44,22 +45,11 @@ retries it.
 In tests, `labllm.testing.FakeGateway` stands in for the gateway. You give it a function
 that plays the provider, and it keeps the same cache and ceiling, offline and free.
 
+To run model work over many units, such as every sample in a study, and to review the
+answers the models could not settle, follow [Write your first unit kind](tutorial.md). It
+also shows how to [keep the reviews in git](tutorial.md#7-keep-the-reviews-in-git).
+
 The [API reference](api.md) has the full list, built from the docstrings in `src/`.
-
-## Keep reviews in git
-
-When a person reviews a unit, `task.save_review` adds one line to a file for that kind of
-unit, in the reviews folder your repo names. Commit that folder. A review outranks the
-models' answer until the unit's inputs change.
-
-Two people may add reviews on two branches at once. Tell git to keep both sides' lines when
-it merges, by adding this line to your repo's `.gitattributes`, with your folder's path:
-
-```text
-reviews/*.jsonl merge=union
-```
-
-When two lines review the same unit, the one saved later wins.
 
 ## Check your work
 

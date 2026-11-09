@@ -117,6 +117,18 @@ class Gateway:
     ------
     GatewayUnreachable
         No transport is given and `$LABLLM_GATEWAY` is unset or not an `http://host:port`.
+
+    Examples
+    --------
+    Through a tunnel to the lab gateway, so the doctest run skips each line that needs it:
+
+    >>> from labllm import Gateway, Model
+    >>> gw = Gateway(repo="my-repo")  # doctest: +SKIP
+    >>> model = Model("deepseek", "deepseek-v4-flash", thinking=False, max_output_tokens=16)
+    >>> with gw.meter("first try", ceiling_usd=0.01) as m:  # doctest: +SKIP
+    ...     reply = m.chat(model, user="Reply with the single word OK.")
+    >>> reply.text  # doctest: +SKIP
+    'OK'
     """
 
     connect_retry_s = 60.0

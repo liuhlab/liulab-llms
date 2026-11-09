@@ -55,28 +55,29 @@ those limits together. A call over a limit waits its turn, in the order calls ar
 never refused for going too fast.
 
 Enter each limit from the provider's console under `[limits.<provider>]`. A provider that
-sets limits for each model gets one table per model, such as `[limits.openai."gpt-5.5"]`. A
-model's own table replaces its provider's. There are three limits, and you set only the ones
-the provider has:
+sets limits for each model gets one table per model, such as
+`[limits.<provider>."<model>"]`. A model's own table replaces its provider's. There are
+three limits, and you set only the ones the provider has:
 
 - `requests_per_second`
 - `input_tokens_per_second`
 - `calls_at_once`
 
-If the console gives a limit per minute, divide it by 60.
+If the console gives a limit per minute, divide it by 60. The numbers below are made up, to
+show the form. Copy each real one from its provider's console:
 
 ```toml
 retry_budget_minutes = 5
 
-[limits.typesafe]
-requests_per_second = 80
-input_tokens_per_second = 100_000
+[limits.some-provider]
+requests_per_second = 10
+input_tokens_per_second = 20_000
 
-[limits.deepseek]
-calls_at_once = 32
+[limits.other-provider]
+calls_at_once = 8
 
-[limits.openai."gpt-5.5"]
-requests_per_second = 166.7  # 10,000 a minute
+[limits.other-provider."some-model"]
+requests_per_second = 2.5  # 150 a minute
 ```
 
 When a provider is busy or cannot be reached, the gateway waits and tries again. It also

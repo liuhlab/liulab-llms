@@ -54,8 +54,8 @@ class Role:
     what: str = ""
 
 
-#: A check on an answer: given the unit's inputs and the answer, a failure message or None.
 AnswerCheck = Callable[[Inputs, Any], str | None]
+"""A check on an answer: given the unit's inputs and the answer, a failure message or None."""
 
 
 @dataclass(frozen=True)

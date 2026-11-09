@@ -17,10 +17,12 @@ from labllm.retry import Retries, unreadable
 
 __all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider"]
 
-#: Plays the provider: takes a request form and returns the reply text (chat) or Jev's
-#: answers. It may raise one of the four stops or `Rejected`, as a provider would; any other
-#: exception plays a response the gateway cannot read.
 Provider = Callable[[dict[str, Any]], Any]
+"""Plays the provider: takes a request form and returns the reply text, or Jev's answers.
+
+It may raise one of the four stops or `Rejected`, as a provider would; any other exception
+plays a response the gateway cannot read.
+"""
 
 
 @dataclass(frozen=True)
