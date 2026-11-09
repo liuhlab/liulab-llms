@@ -203,15 +203,31 @@ class Server:
                     raise
                 retries.attempts += 1
                 sent = self._clock.now()
-                done = Row(call, key, sent, sent, attempt=retries.attempts, waited_s=sent - started)
+                done = Row(
+                    call,
+                    key,
+                    sent,
+                    None,
+                    attempt=retries.attempts,
+                    waited_s=sent - started,
+                    reserved_usd=reserve,
+                )
                 input_tokens = None
+                try:
+                    row_id = self._record.add(done)
+                except BaseException:
+                    self._settle(meter, reserve, 0.0)
+                    turn.cancel()
+                    raise
                 try:
                     attempt = provider(form)
                     input_tokens = attempt.input_tokens
                 except Exception as e:
                     failure = unreadable(e, form["provider"])
                     self._settle(meter, reserve, 0.0)
-                    self._record.add(self._ended(done, error=failure.reason, message=str(failure)))
+                    self._record.finish(
+                        row_id, self._ended(done, error=failure.reason, message=str(failure))
+                    )
                     if not isinstance(failure, ProviderUnavailable):
                         raise
                     # Overload or no answer at all: every caller of this provider waits it out.
@@ -227,14 +243,15 @@ class Server:
                     self._settle(meter, reserve, attempt.cost_usd)
                     reply = {"text" if form["route"] == "chat" else "answers": attempt.output}
                     if attempt.output:
-                        self._record.add(
+                        self._record.finish(
+                            row_id,
                             self._ended(
                                 done,
                                 reply=reply,
                                 usage=attempt.usage,
                                 response=attempt.response,
                                 cost_usd=attempt.cost_usd,
-                            )
+                            ),
                         )
                         return {
                             **reply,
@@ -248,7 +265,8 @@ class Server:
                     empty = ProviderUnavailable(
                         f"{form['provider']} sent an empty reply", status=200
                     )
-                    self._record.add(
+                    self._record.finish(
+                        row_id,
                         self._ended(
                             done,
                             error=empty.reason,
@@ -256,7 +274,7 @@ class Server:
                             usage=attempt.usage,
                             response=attempt.response,
                             cost_usd=attempt.cost_usd,
-                        )
+                        ),
                     )
                     again = retries.again(empty)
                 finally:

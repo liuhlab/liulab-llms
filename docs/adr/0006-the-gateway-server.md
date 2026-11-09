@@ -30,8 +30,10 @@ keeps its key order. The cache entry is a key's first successful row not retired
 through a partial index. A call that misses the cache claims its key in memory; an identical
 call waits for the claim, then reads the cache again, so a request is paid once. The cost: it
 waits through the first call's retries. An admin retires a key with
-`UPDATE exchanges SET retired_at = now() WHERE key = '…' AND retired_at IS NULL`. A meter's
-spend is summed from its rows the first time the server sees it after a start.
+`UPDATE exchanges SET retired_at = now() WHERE key = '…' AND retired_at IS NULL`. An
+attempt's row is added when it starts, with its reservation, and finished when it ends. A
+meter's spend is summed from its rows the first time the server sees it after a start, an
+unfinished row at its reservation, so a crash mid-call keeps the ceiling.
 
 ## Consequences
 

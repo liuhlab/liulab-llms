@@ -32,6 +32,7 @@ from labllm import (
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
+    wire,
 )
 from labllm.client import HttpTransport
 from labllm.peak import MARGIN_S
@@ -160,6 +161,39 @@ def test_a_restart_keeps_each_meters_spend(conninfo: str) -> None:
         pytest.raises(CeilingReached),
     ):
         m.chat(CHAT, user="two")  # 0.03 spent before the restart, plus 0.10 held
+
+
+def test_an_attempt_in_flight_through_a_crash_still_holds_its_reservation(conninfo: str) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def slow(form: dict[str, Any]) -> str:
+        started.set()
+        assert release.wait(timeout=10)
+        return "abc"
+
+    def call(user: str) -> bytes:
+        form = wire.chat_form(CHAT, user=user, system=None, schema=None)
+        meter = {"meter": "m1", "label": "crash", "ceiling_usd": 0.15, "off_peak_only": False}
+        return wire.Call(form=form, person="ann", repo="tests", tag=None, **meter).encode()
+
+    clock = FakeClock()
+    with Record(conninfo) as record, ThreadPoolExecutor(1) as pool:
+        crashing = Server(record, Prices(PRICES), {"chat": stand_in(slow, PRICES)}, clock=clock)
+        in_flight = pool.submit(crashing.answer, "/chat", call("one"))
+        try:
+            assert started.wait(timeout=10)
+            # A gateway started over the same record while that attempt is in flight, as after
+            # a crash, counts it at its reservation: 0.10 held, and 0.10 more would cross.
+            answers = {"chat": stand_in(lambda f: "abc", PRICES)}
+            restarted = Server(record, Prices(PRICES), answers, clock=clock)
+            with pytest.raises(CeilingReached):
+                wire.decode_response(*restarted.answer("/chat", call("two")))
+        finally:
+            release.set()
+        wire.decode_response(*in_flight.result(timeout=10))
+    assert [(e.form is not None, e.cost_usd) for e in read_record(conninfo)] == [
+        (True, pytest.approx(0.03))
+    ]
 
 
 class BrokenRecord(Record):
