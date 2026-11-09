@@ -9,6 +9,7 @@ from typing import Any
 
 from labllm.errors import Rejected
 from labllm.model import Price
+from labllm.peak import OffPeak
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,9 @@ class Prices:
         self._settings = dict(settings or {})
 
     def price(self, form: dict[str, Any]) -> Price:
-        """Return the price of the form's model, at its dearest hour.
+        """Return the price of the form's model at its dearest hour, and its off-peak hours.
+
+        A table model's off-peak hours are its entry's `off_peak_pricing`.
 
         Raises
         ------
@@ -50,7 +53,11 @@ class Prices:
             return self._settings[name]
         try:
             info = litellm().get_model_info(model=name, custom_llm_provider=form["provider"])
-            return Price(float(info["input_cost_per_token"]), float(info["output_cost_per_token"]))
+            return Price(
+                float(info["input_cost_per_token"]),
+                float(info["output_cost_per_token"]),
+                OffPeak.read(info.get("off_peak_pricing")),
+            )
         except Exception as e:
             raise Rejected(
                 f"no price for model {name!r}: the pinned table lacks it and the gateway's "

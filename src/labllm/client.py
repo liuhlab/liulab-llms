@@ -2,6 +2,7 @@
 
 import getpass
 import http.client
+import logging
 import math
 import os
 import threading
@@ -14,8 +15,10 @@ from urllib.parse import urlsplit
 
 from labllm import wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import GatewayUnreachable
+from labllm.errors import GatewayUnreachable, PeakHours
 from labllm.model import Model
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -156,6 +159,7 @@ class Gateway:
         deadline = self._clock.now() + self.connect_retry_s
         delay = 0.5
         while True:
+            sent = self._clock.now()
             try:
                 status, out = self._transport.send(path, body)
             except ConnectionError as e:
@@ -165,7 +169,14 @@ class Gateway:
                 self._clock.sleep(min(delay, left))
                 delay = min(delay * 2, 8.0)
                 continue
-            return wire.decode_response(status, out)
+            try:
+                return wire.decode_response(status, out)
+            except PeakHours as e:
+                log.info("%s; waiting", e)
+                # A gateway clock a little behind this one must not cause a burst of resends.
+                self._clock.sleep_until(max(e.until, sent + 1.0))
+                deadline = self._clock.now() + self.connect_retry_s
+                delay = 0.5
 
 
 class Meter:

@@ -15,6 +15,10 @@ class Clock(Protocol):
         """Block the calling thread for `seconds`."""
         ...
 
+    def sleep_until(self, t: float) -> None:
+        """Block the calling thread until `now()` reaches `t`."""
+        ...
+
 
 class SystemClock:
     """The real clock."""
@@ -26,3 +30,8 @@ class SystemClock:
     def sleep(self, seconds: float) -> None:
         """Block the calling thread for `seconds`."""
         time.sleep(seconds)
+
+    def sleep_until(self, t: float) -> None:
+        """Block the calling thread until `now()` reaches `t`."""
+        while (left := t - time.time()) > 0:
+            time.sleep(left)

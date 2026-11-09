@@ -8,6 +8,7 @@ comes back as status 200 and a JSON object; an error as another status and
 
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -15,6 +16,7 @@ from typing import Any
 from labllm.errors import (
     CeilingReached,
     GatewayUnreachable,
+    PeakHours,
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
@@ -45,6 +47,7 @@ STATUS = {
     "provider_unavailable": 503,
     "gateway_unreachable": 502,
     "rejected": 400,
+    "peak_hours": 503,
 }
 
 
@@ -139,9 +142,11 @@ def encode_reply(reply: dict[str, Any]) -> tuple[int, bytes]:
     return 200, json.dumps(reply, ensure_ascii=False).encode()
 
 
-def encode_error(error: Stopped | Rejected) -> tuple[int, bytes]:
-    """Encode an error as a status and body."""
-    body = {"error": error.reason, "message": str(error)}
+def encode_error(error: Stopped | Rejected | PeakHours) -> tuple[int, bytes]:
+    """Encode an error as a status and body. A peak reply adds `until`."""
+    body: dict[str, Any] = {"error": error.reason, "message": str(error)}
+    if isinstance(error, PeakHours):
+        body["until"] = error.until
     return STATUS[error.reason], json.dumps(body, ensure_ascii=False).encode()
 
 
@@ -150,7 +155,7 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
 
     Raises
     ------
-    Stopped, Rejected
+    Stopped, Rejected, PeakHours
         The class the response's reason names. A response no client understands raises
         `GatewayUnreachable`.
     """
@@ -165,4 +170,7 @@ def decode_response(status: int, body: bytes) -> dict[str, Any]:
         error = _ERRORS.get(reason) if isinstance(reason, str) else None
         if error is not None:
             raise error(data.get("message", ""))
+        until = data.get("until")
+        if reason == PeakHours.reason and type(until) in (int, float) and math.isfinite(until):
+            raise PeakHours(data.get("message", ""), until=float(until))
     raise GatewayUnreachable(f"the gateway answered {status}: {body[:200]!r}")

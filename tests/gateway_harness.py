@@ -79,13 +79,13 @@ class GatewayHarness:
 
     def __init__(self, address: str, record: Record, clock: FakeClock) -> None:
         self.fn: Any = _unset
+        self.clock = clock
         self._address = address
         self._record = record
-        self._clock = clock
 
     def client(self, *, repo: str = "tests", person: str | None = None) -> Gateway:
         return Gateway(
-            repo=repo, person=person, transport=HttpTransport(self._address), clock=self._clock
+            repo=repo, person=person, transport=HttpTransport(self._address), clock=self.clock
         )
 
     def provider(self, fn: Any) -> None:

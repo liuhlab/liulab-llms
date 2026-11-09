@@ -7,12 +7,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from labllm import wire
+from labllm import peak, wire
 from labllm.client import Gateway
-from labllm.errors import CeilingReached, Rejected, Stopped
+from labllm.errors import CeilingReached, PeakHours, Rejected, Stopped
 from labllm.model import Price
+from labllm.peak import OffPeak
 
-__all__ = ["Exchange", "FakeClock", "FakeGateway", "Price", "Provider"]
+__all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider"]
 
 #: Plays the provider: takes a request form and returns the reply text (chat) or Jev's
 #: answers. It may raise any `Stopped` subclass or `Rejected`, as the gateway would.
@@ -59,6 +60,14 @@ class FakeClock:
         with self._lock:
             self._now += seconds
 
+    def sleep_until(self, t: float) -> None:
+        """Move `now` forward to `t`, unless it is already later, and return.
+
+        Threads waiting for one moment wake together, as they would in real time.
+        """
+        with self._lock:
+            self._now = max(self._now, t)
+
 
 class FakeGateway:
     """Stands in for the gateway, keeping its rules, with `provider` playing the provider.
@@ -67,6 +76,8 @@ class FakeGateway:
     meter's ceiling, with every call in flight holding back its largest possible cost: input
     tokens times the input price, plus the full output allowance times the output price. A
     model missing from `prices` is `Rejected`. Every attempt and hit goes in `record`.
+    An off-peak-only call that is not a hit gets the peak reply in its price's peak hours,
+    and from `peak_margin_s` before they start.
 
     Tokens are counted as characters: input is the messages' text, or Jev's description and
     its questions as JSON; output is the reply text, or Jev's answers as JSON.
@@ -86,8 +97,10 @@ class FakeGateway:
         *,
         prices: Mapping[str, Price],
         clock: FakeClock | None = None,
+        peak_margin_s: float = peak.MARGIN_S,
     ) -> None:
         self.clock = clock or FakeClock()
+        self._peak_margin_s = peak_margin_s
         self._provider = provider
         self._prices = dict(prices)
         self._lock = threading.Lock()
@@ -123,7 +136,7 @@ class FakeGateway:
             if path != wire.PATHS[call.form["route"]]:
                 raise Rejected(f"{path} does not take a {call.form['route']} call")
             return wire.encode_reply(self._answer(call))
-        except (Stopped, Rejected) as e:
+        except (Stopped, Rejected, PeakHours) as e:
             return wire.encode_error(e)
 
     def _answer(self, call: wire.Call) -> dict[str, Any]:
@@ -137,6 +150,8 @@ class FakeGateway:
             price = self._prices.get(form["model"])
             if price is None:
                 raise Rejected(f"no price for model {form['model']!r}")
+            if call.off_peak_only:
+                peak.check(price.off_peak, self.clock.now(), self._peak_margin_s)
             input_tokens = _input_tokens(form)
             reserve = (
                 input_tokens * price.input_usd_per_token

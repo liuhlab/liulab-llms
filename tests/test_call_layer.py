@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from harness import CHAT, JEV, Harness
+from harness import CHAT, HOUR, JEV, MONDAY, PEAK, Harness
 from labllm import (
     CeilingReached,
     GatewayUnreachable,
@@ -17,6 +17,7 @@ from labllm import (
     Rejected,
     Stopped,
 )
+from labllm.peak import MARGIN_S
 
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
 
@@ -214,3 +215,70 @@ def test_calls_from_many_threads_are_each_answered_and_counted(harness: Harness)
     assert (m.requests, m.cache_hits) == (40, 0)
     assert m.spent_usd == pytest.approx(40 * 0.03)
     assert len(harness.record()) == 40
+
+
+def test_an_off_peak_only_call_in_peak_waits_until_peak_ends(harness: Harness) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 2 * HOUR)  # in DeepSeek's 01:00-04:00 UTC peak
+    with harness.client().meter("night", ceiling_usd=1.0, off_peak_only=True) as m:
+        r = m.chat(PEAK, user="hello")
+    assert (r.text, sent_at) == ("abc", [MONDAY + 4 * HOUR])
+    assert len(harness.record()) == 1  # the peak reply never reached the provider
+
+
+@pytest.mark.parametrize(
+    ("model", "off_peak_only"), [(PEAK, False), (CHAT, True)], ids=["off-by-default", "no-hours"]
+)
+def test_in_peak_a_call_goes_out_at_once_unless_off_peak_only_applies(
+    harness: Harness, model: Model, off_peak_only: bool
+) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 2 * HOUR)
+    meter = {"off_peak_only": True} if off_peak_only else {}  # the default is off
+    with harness.client().meter("now", ceiling_usd=1.0, **meter) as m:
+        m.chat(model, user="hello")
+    assert sent_at == [MONDAY + 2 * HOUR]
+
+
+@pytest.mark.parametrize(
+    ("arrives", "sent"),
+    [
+        (MONDAY + HOUR - MARGIN_S - 1, MONDAY + HOUR - MARGIN_S - 1),
+        (MONDAY + HOUR - MARGIN_S, MONDAY + 4 * HOUR),
+    ],
+    ids=["just-before-the-margin", "at-the-margin"],
+)
+def test_new_off_peak_only_calls_stop_the_margin_before_peak_starts(
+    harness: Harness, arrives: float, sent: float
+) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(arrives)
+    with harness.client().meter("dusk", ceiling_usd=1.0, off_peak_only=True) as m:
+        m.chat(PEAK, user="hello")
+    assert sent_at == [sent]
+
+
+def test_an_off_peak_only_cache_hit_is_answered_in_peak(harness: Harness) -> None:
+    harness.provider(lambda form: "abc")
+    harness.clock.sleep_until(MONDAY)
+    with harness.client().meter("replay", ceiling_usd=1.0, off_peak_only=True) as m:
+        m.chat(PEAK, user="hello")
+        harness.clock.sleep_until(MONDAY + 2 * HOUR)
+        r = m.chat(PEAK, user="hello")
+    assert (r.cached, harness.clock.now()) == (True, MONDAY + 2 * HOUR)
+
+
+def test_many_off_peak_only_calls_wait_through_peak_together(harness: Harness) -> None:
+    sent_at: list[float] = []
+    harness.provider(lambda form: sent_at.append(harness.clock.now()) or "abc")
+    harness.clock.sleep_until(MONDAY + 7 * HOUR)  # in the 06:00-10:00 UTC peak
+    with (
+        harness.client().meter("crowd", ceiling_usd=10.0, off_peak_only=True) as m,
+        ThreadPoolExecutor(8) as pool,
+    ):
+        replies = list(pool.map(lambda i: m.chat(PEAK, user=f"doc {i}"), range(16)))
+    assert all(r.text == "abc" for r in replies)
+    assert sent_at == [MONDAY + 10 * HOUR] * 16

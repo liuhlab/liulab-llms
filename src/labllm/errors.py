@@ -42,3 +42,17 @@ class Rejected(Exception):  # noqa: N818 - the name callers catch
     """
 
     reason = "rejected"
+
+
+class PeakHours(Exception):  # noqa: N818 - named for what the gateway says
+    """An off-peak-only call reached the gateway in its provider's peak hours.
+
+    The client waits until `until`, in seconds since the Unix epoch, and sends it again, so
+    callers never see this.
+    """
+
+    reason = "peak_hours"
+
+    def __init__(self, message: str, *, until: float) -> None:
+        super().__init__(message)
+        self.until = until
