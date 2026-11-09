@@ -103,6 +103,9 @@ gcloud compute instances add-access-config <instance> --zone=<zone> --access-con
 
 ## Snapshot before an upgrade
 
+A snapshot name takes only lowercase letters, digits and dashes, so write the tag's dots as
+dashes: `v2026-11-1`.
+
 ```bash
 gcloud compute snapshots create llm-gateway-before-<tag> --source-disk=llm-gateway-data --source-disk-zone=<zone>
 ```
