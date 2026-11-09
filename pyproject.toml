@@ -31,6 +31,8 @@ gateway = [
     "psycopg-pool>=3.2",
     # Jev's own client. Not on conda-forge; pure Python with PyPI provenance, so a range.
     "typesafe-sdk>=0.7.5,<0.8",
+    # The chat provider reads its errors. Any version the pinned LiteLLM takes.
+    "openai",
 ]
 
 # ============================== build ==============================
@@ -74,6 +76,9 @@ python-fastjsonschema = ">=2.21"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+# The tests play providers' HTTP APIs under LiteLLM (httpx) and TypeSafe's SDK (httpx2).
+httpx = "*"
+httpx2 = "*"
 # Declared here too, not inherited: the tests run conformance, and a test environment shaped
 # differently from this one would import-error on every test.
 pyyaml = "*"
@@ -87,6 +92,8 @@ psycopg-pool = ">=3.2"
 postgresql = "*"
 # The pinned LiteLLM asks for <9; left free, the conda solve picks 9 and the PyPI solve fails.
 importlib-metadata = "<9"
+# The same: the pinned LiteLLM asks for >=2.20,<3, and conda-forge's newest is 3.
+openai = ">=2.20,<3"
 
 # Exact: at 0.0.x nothing promises the next patch is compatible.
 [tool.pixi.feature.docs.dependencies]
