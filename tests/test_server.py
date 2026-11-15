@@ -850,6 +850,7 @@ def test_a_gateway_with_no_jev_key_rejects_jev_calls(
         ask(conninfo, TypeSafeJev(Prices()))
 
 
+@pytest.mark.slow
 def test_the_server_imports_litellm_only_to_use_it_and_never_downloads_prices() -> None:
     code = (
         "import os, sys\n"
