@@ -39,7 +39,7 @@ jobs:
           # hatch-vcs reads the newest tag, and a shallow clone has none, so without this
           # the release would be built and published as a dev version.
           fetch-depth: 0
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           locked: true
       # The same task the `build` step in `ci.yml` runs, so what is published was built the
