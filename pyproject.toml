@@ -79,9 +79,7 @@ pytest = "*"
 # The tests play providers' HTTP APIs under LiteLLM (httpx) and TypeSafe's SDK (httpx2).
 httpx = "*"
 httpx2 = "*"
-# Declared here too, not inherited: the tests run conformance, and a test environment shaped
-# differently from this one would import-error on every test.
-pyyaml = "*"
+pytest-timeout = "*"
 
 # The gateway extra's packages from conda-forge, plus the PostgreSQL server: the tests start a
 # throwaway one, and so does `python -m labllm.server --throwaway`. LiteLLM stays a PyPI
@@ -106,12 +104,11 @@ mkdocstrings-python = ">=2.0.7,<3"
 docs = "zensical serve"
 docs-build = "zensical build --clean --strict"
 
-# `default` takes `test` so pyright can resolve pytest, and not `docs`, which exists so that
-# exactly one CI job installs it. `test` and `default` take `gateway`, so the one gate covers
-# the server. `gateway` alone is what the server's machine installs.
+# `default` takes `test` so pyright can resolve pytest, and not `docs`, so `pixi run check`
+# never installs the site builder. `default` takes `gateway`, so the one gate covers the
+# server. `gateway` alone is what the server's machine installs.
 [tool.pixi.environments]
 default = { features = ["test", "gateway"], solve-group = "default" }
-test = { features = ["test", "gateway"], solve-group = "default" }
 gateway = { features = ["gateway"], solve-group = "default" }
 docs = { features = ["docs"], solve-group = "default" }
 
@@ -121,6 +118,7 @@ fmt = "ruff format ."
 fmt-check = "ruff format --check ."
 typecheck = "pyright"
 test = "pytest"
+test-slow = "pytest -m slow"
 build = "python -m build"
 # `.`, never an absolute path: an absolute path matches no `.vale.ini` section and exits 0.
 # The globs stop vale walking trees it never lints — check.sh runs steps concurrently, and a
@@ -130,7 +128,10 @@ markdownlint = "markdownlint-cli2"
 conformance = "python scripts/conformance.py"
 # The static step list lives here and nowhere else; `check.sh` takes it as arguments.
 check-static = "bash scripts/check.sh lint fmt-check typecheck vale markdownlint conformance"
-check = { depends-on = ["check-static", "test"] }
+# `test` runs whatever `check-static` returned; `depends-on` would skip it. After it, not beside
+# it, so pytest's time limits and vale's walk of `tests/` never share the machine. pixi's task
+# shell has `$?` but no arithmetic.
+check = "pixi run check-static; static=$?; pixi run test && exit $static"
 
 # ============================== ruff ==============================
 
@@ -176,7 +177,7 @@ convention = "numpy"
 
 [tool.pyright]
 # `scripts` and `skills` included: CI and conformance execute those files.
-include = ["src", "tests", "scripts", "skills"]
+include = ["src", "tests", "scripts", "skills", "conftest.py"]
 exclude = ["**/__pycache__", "**/.pixi"]
 venvPath = ".pixi/envs"
 venv = "default"
@@ -191,8 +192,8 @@ useLibraryCodeForTypes = true
 reportMissingTypeStubs = "none"
 
 # `tests/` back to plain `standard`. A fixture's type is pytest's, not the author's, and a
-# test signature promises a caller nothing: the rule fired four times on twenty lines of
-# correct test code and caught nothing (#65). `src` keeps it. Do not delete this block.
+# test signature promises a caller nothing, so in `tests/` the rule fires on correct code and
+# catches nothing. `src` keeps it. Do not delete this block.
 [[tool.pyright.executionEnvironments]]
 root = "tests"
 reportMissingParameterType = "none"
@@ -205,14 +206,16 @@ reportMissingParameterType = "none"
 testpaths = ["tests", "src"]
 # `--continue-on-collection-errors` because collecting `src` IMPORTS every module in it. A
 # module needing an absent optional dependency — a plotting path, a CUDA path, a
-# platform-specific binding — used to abort collection and run zero tests. It now costs one
-# error. Measured: the run still exits non-zero, and a drifted example still fails (#66).
+# platform-specific binding — would otherwise abort collection and run zero tests. With the
+# flag it costs one error: the run still exits non-zero, and a drifted example still fails.
 addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
     "--doctest-modules",
     "--continue-on-collection-errors",
+    "-m",
+    "not slow",
 ]
 xfail_strict = true
 filterwarnings = [
@@ -221,6 +224,11 @@ filterwarnings = [
     # time it builds them. LiteLLM's code, not ours, and harmless to a response we only read.
     "ignore:Item.*on TypedDict class.*is using the `ReadOnly` qualifier:UserWarning",
 ]
+# The two time limits, here and nowhere else: conformance fails a copy in a workflow, a task or
+# a test. `conftest.py` reads `suite_budget`; pytest-timeout reads `timeout`, which covers a
+# test's setup, call and teardown. A test marked `slow` is held to neither.
+timeout = 2
+suite_budget = 45
 
 # ============================== liulab ==============================
 # Read by `scripts/conformance.py`; its docstring has the rules.
