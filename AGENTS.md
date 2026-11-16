@@ -43,6 +43,7 @@ misfires, is as much a contribution as adding one.
 src/labllm/       the package: client.py, wire.py (request form, cache key), testing.py,
                   engine.py, state.py (state file), reviews.py, server/ (the gateway)
 tests/            pytest; test_call_layer.py runs against every gateway in conftest.py
+conftest.py       the suite budget and the slow lane
 docs/             the published site; docs/adr/ and docs/agents/ are agent-facing
 skills/           repo-local agent skills; `python skills/install.py --help`
 scripts/check.sh  the gate runner
@@ -63,10 +64,17 @@ GLOSSARY.md       the glossary — the words this repo uses
 
 `check.sh` runs every step and reports **all** failures, not just the first — so read to the
 bottom before fixing anything. The docs build is not part of `check`; it needs its own pixi
-environment and runs as its own CI job.
+environment, and CI runs it as a step of its own.
 
-Work on a branch and merge through a pull request: `pull_request` tests the merge commit,
-while a push to `main` tests it only once it has landed.
+Work on a branch and merge through a pull request. CI runs on pull requests only, and tests
+the merge commit.
+
+Test time has two limits, set in `[tool.pytest.ini_options]` and nowhere else:
+
+- **`timeout`** caps one test, setup and teardown included.
+- **`suite_budget`** caps a run with no slow test in it, and prints its time against it.
+- **The slow lane:** a test marked `slow` is held to neither, and runs only in
+  `pixi run test-slow`.
 
 Four traps in the gate:
 

@@ -13,6 +13,12 @@ sets one.
   stronger model, and a person's review, with its tests on the fake gateway.
 - A page on reaching the lab gateway through an SSH tunnel.
 
+### Changed
+
+- Tests now have time limits: 2 seconds for one test and 45 seconds for the whole run. A test
+  marked `slow` is exempt and runs only with `pixi run test-slow`. CI is one job that runs only
+  on pull requests that are ready for review, not on drafts or on pushes to `main`.
+
 ## [2026.11.0] - 2026-11-09
 
 The first release.

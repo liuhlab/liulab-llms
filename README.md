@@ -58,6 +58,6 @@ python skills/install.py --target all
 If you work on the lab's clusters, add the shared plugin once per machine:
 
 ```text
-/plugin marketplace add liuhlab/liulab-compute-skills
-/plugin install lab-compute@liulab
+/plugin marketplace add liuhlab/liulab-skills
+/plugin install lab@liulab
 ```

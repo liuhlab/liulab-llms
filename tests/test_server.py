@@ -850,6 +850,21 @@ def test_a_gateway_with_no_jev_key_rejects_jev_calls(
         ask(conninfo, TypeSafeJev(Prices()))
 
 
+# The next test without its price lookup, whose LiteLLM import is too slow for the default run.
+def test_importing_the_server_loads_no_litellm_and_keeps_the_price_table_local() -> None:
+    code = (
+        "import os, sys\n"
+        "from labllm.server import Prices\n"
+        "print('litellm' in sys.modules, os.environ['LITELLM_LOCAL_MODEL_COST_MAP'])\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "LITELLM_LOCAL_MODEL_COST_MAP"}
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env
+    )
+    assert out.stdout.split() == ["False", "True"]
+
+
+@pytest.mark.slow
 def test_the_server_imports_litellm_only_to_use_it_and_never_downloads_prices() -> None:
     code = (
         "import os, sys\n"

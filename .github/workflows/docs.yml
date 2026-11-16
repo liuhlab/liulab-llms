@@ -4,7 +4,7 @@
 # halves are spelled out — build into `./site`, then force-push that directory to
 # `gh-pages`.
 #
-# The pull request already builds the site (the `docs` job in `ci.yml`). This workflow adds
+# The pull request already builds the site (the `docs-build` step in `ci.yml`). This workflow adds
 # only the publish, so it runs on `main` and nowhere else.
 name: docs
 
@@ -27,10 +27,12 @@ concurrency:
 
 jobs:
   deploy:
+    # A private repo skips the deploy: on a free plan, GitHub Pages serves public repos only.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           environments: docs
           locked: true
