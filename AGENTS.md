@@ -43,6 +43,7 @@ misfires, is as much a contribution as adding one.
 src/labllm/       the package: client.py, wire.py (request form, cache key), testing.py,
                   engine.py, state.py (state file), reviews.py, server/ (the gateway)
 tests/            pytest; test_call_layer.py runs against every gateway in conftest.py
+conftest.py       the suite budget and the slow lane
 docs/             the published site; docs/adr/ and docs/agents/ are agent-facing
 skills/           repo-local agent skills; `python skills/install.py --help`
 scripts/check.sh  the gate runner
