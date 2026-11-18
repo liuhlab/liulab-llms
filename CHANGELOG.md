@@ -12,6 +12,12 @@ sets one.
 - A tutorial that walks one unit kind from its declaration through a pass, a pass with a
   stronger model, and a person's review, with its tests on the fake gateway.
 - A page on reaching the lab gateway through an SSH tunnel.
+- `Task.passes` reads back every pass of a kind: what it was started with, how it ended, its
+  counts and its spend. A pass killed before it ended is listed too.
+- `Task.keys` with no endings lists every unit a task has seen, including units that were
+  only ever unfinished or held.
+- `run_pass` takes a short `note`, kept with the pass and returned by `Task.passes`. State
+  files of older layouts upgrade when opened, with no note on their passes.
 
 ### Changed
 
