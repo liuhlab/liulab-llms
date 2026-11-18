@@ -28,6 +28,7 @@ from labllm.state import (
     PASS_ENDINGS,
     CheckResult,
     Outcome,
+    Pass,
     PassStart,
     StateFile,
     UnitCost,
@@ -419,11 +420,14 @@ class Task:
         label: str,
         off_peak_only: bool = False,
         units_at_once: int = 32,
+        note: str | None = None,
     ) -> PassResult:
         """Run `kind` over `keys`, starting them in the order given, under one new meter.
 
         `units_at_once` units run at once, each on its own thread, so the kind's function must
         be safe to run on many threads. Each unit's outcome and cost are recorded as it ends.
+        `note` is a short text kept with the pass, such as the build of the data it read;
+        `passes` returns it.
 
         A `Stopped` error stops the pass. Calls already sent finish and are paid; no new call
         is sent and no new unit starts. The unit that met the error, every unit that then
@@ -462,6 +466,7 @@ class Task:
                 off_peak_only=off_peak_only,
                 repo_version=_repo_version(kind.run),
                 labllm_version=version("liulab-llms"),
+                note=note,
             )
         )
         counts: dict[str, int] = dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0)
@@ -623,14 +628,27 @@ class Task:
         """Return the unit's outcome in every pass that ran it, oldest first."""
         return self._state.outcomes(kind.name, key)
 
-    def keys(self, kind: UnitKind, *, endings: Iterable[str]) -> list[str]:
+    def passes(self, kind: UnitKind) -> list[Pass]:
+        """Return every pass of the kind, whatever its version, oldest first.
+
+        A pass whose process was killed before it ended is listed too, with what its units
+        recorded.
+        """
+        return self._state.passes(kind.name)
+
+    def keys(self, kind: UnitKind, *, endings: Iterable[str] | None = None) -> list[str]:
         """Return the keys whose current ending is one of `endings`, in key order.
+
+        With no `endings`, return every key any pass of the kind has recorded, whatever its
+        outcomes, so a unit that has only ever been unfinished or held is listed too.
 
         Raises
         ------
         ValueError
             One of `endings` is not an ending.
         """
+        if endings is None:
+            return self._state.keys(kind.name)
         wanted = set(endings)
         if unknown := wanted - set(ENDINGS):
             raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")

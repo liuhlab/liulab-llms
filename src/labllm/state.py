@@ -80,6 +80,9 @@ _UPGRADES: tuple[str, ...] = (
     ALTER TABLE outcomes ADD COLUMN usage TEXT;
     ALTER TABLE outcomes ADD COLUMN seconds REAL;
     """,
+    """
+    ALTER TABLE passes ADD COLUMN note TEXT;
+    """,
 )
 
 #: The layout this version of liulab-llms writes.
@@ -310,6 +313,39 @@ class PassStart:
     off_peak_only: bool
     repo_version: str
     labllm_version: str
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class Pass:
+    """One pass of a kind, as its task recorded it.
+
+    The fields up to `labllm_version` are what the pass was started with; `note` is None if it
+    was given none. `ended` is False for a pass that has not ended: one still running, or one
+    whose process was killed or interrupted. `stopped` is the reason of the `Stopped` error
+    that stopped it, or None. `counts` has every ending and not-ending a pass gives, zeros
+    included, over the units it recorded. The dollars, requests and cache hits are its meter's
+    counters, or, for a pass that has not ended, the sums over the units it recorded.
+    """
+
+    pass_id: int
+    meter: str
+    kind: str
+    kind_version: str
+    label: str
+    note: str | None
+    models: dict[str, Model]
+    ceiling_usd: float
+    off_peak_only: bool
+    repo_version: str
+    labllm_version: str
+    ended: bool
+    stopped: str | None
+    counts: dict[str, int]
+    spent_usd: float
+    first_cost_usd: float
+    requests: int
+    cache_hits: int
 
 
 class StateFile:
@@ -383,7 +419,7 @@ class StateFile:
         with self._write() as conn:
             cursor = conn.execute(
                 "INSERT INTO passes (meter, kind, kind_version, label, models, ceiling_usd, "
-                "off_peak_only, repo_version, labllm_version) VALUES (?,?,?,?,?,?,?,?,?)",
+                "off_peak_only, repo_version, labllm_version, note) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     start.meter,
                     start.kind,
@@ -394,6 +430,7 @@ class StateFile:
                     start.off_peak_only,
                     start.repo_version,
                     start.labllm_version,
+                    start.note,
                 ),
             )
         assert cursor.lastrowid is not None
@@ -499,6 +536,70 @@ class StateFile:
                 (kind,),
             ).fetchall()
 
+    def keys(self, kind: str) -> list[str]:
+        """Return every key with an outcome of one kind, in key order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT key FROM outcomes WHERE kind=? ORDER BY key", (kind,)
+            ).fetchall()
+        return [key for (key,) in rows]
+
+    def passes(self, kind: str) -> list[Pass]:
+        """Return every pass of one kind, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT pass_id, meter, kind, kind_version, label, note, models, ceiling_usd, "
+                "off_peak_only, repo_version, labllm_version, spent_usd IS NOT NULL, stopped, "
+                "coalesce(spent_usd, (SELECT total(spent_usd) FROM outcomes o "
+                "  WHERE o.pass_id = p.pass_id)), "
+                "coalesce(first_cost_usd, (SELECT total(first_cost_usd) FROM outcomes o "
+                "  WHERE o.pass_id = p.pass_id)), "
+                "coalesce(requests, (SELECT coalesce(sum(requests), 0) FROM outcomes o "
+                "  WHERE o.pass_id = p.pass_id)), "
+                "coalesce(cache_hits, (SELECT coalesce(sum(cache_hits), 0) FROM outcomes o "
+                "  WHERE o.pass_id = p.pass_id)) "
+                "FROM passes p WHERE kind=? ORDER BY pass_id",
+                (kind,),
+            ).fetchall()
+            counted = self._conn.execute(
+                "SELECT pass_id, ending, count(*) FROM outcomes WHERE kind=? "
+                "GROUP BY pass_id, ending",
+                (kind,),
+            ).fetchall()
+        counts: dict[int, dict[str, int]] = {
+            row[0]: dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0) for row in rows
+        }
+        for pass_id, ending, n in counted:
+            counts[pass_id][ending] = n
+        passes = []
+        for row in rows:
+            (pass_id, meter, kind_name, kind_version, label, note, models) = row[:7]
+            (ceiling_usd, off_peak_only, repo_version, labllm_version, ended, stopped) = row[7:13]
+            (spent, first, requests, cache_hits) = row[13:]
+            passes.append(
+                Pass(
+                    pass_id=pass_id,
+                    meter=meter,
+                    kind=kind_name,
+                    kind_version=kind_version,
+                    label=label,
+                    note=note,
+                    models=_models(models),
+                    ceiling_usd=ceiling_usd,
+                    off_peak_only=bool(off_peak_only),
+                    repo_version=repo_version,
+                    labllm_version=labllm_version,
+                    ended=bool(ended),
+                    stopped=stopped,
+                    counts=counts[pass_id],
+                    spent_usd=spent,
+                    first_cost_usd=first,
+                    requests=requests,
+                    cache_hits=cache_hits,
+                )
+            )
+        return passes
+
     def _outcome(self, row: tuple[Any, ...]) -> Outcome:
         (kind, key, pass_id, ending, inputs_tag, answer, reason) = row[:7]
         (spent, first, requests, cache_hits, usage, seconds) = row[7:13]
@@ -510,7 +611,7 @@ class StateFile:
         stamp = Stamp(
             kind=kind,
             kind_version=kind_version,
-            models={role: Model(**m) for role, m in json.loads(models).items()},
+            models=_models(models),
             inputs_tag=inputs_tag,
             pass_id=pass_id,
             meter=meter,
@@ -528,6 +629,10 @@ class StateFile:
             if usage is None
             else UnitCost(spent, first, requests, cache_hits, json.loads(usage), seconds),
         )
+
+
+def _models(text: str) -> dict[str, Model]:
+    return {role: Model(**m) for role, m in json.loads(text).items()}
 
 
 _OUTCOME_FIELDS = (

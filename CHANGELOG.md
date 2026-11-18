@@ -12,9 +12,17 @@ sets one.
 - A tutorial that walks one unit kind from its declaration through a pass, a pass with a
   stronger model, and a person's review, with its tests on the fake gateway.
 - A page on reaching the lab gateway through an SSH tunnel.
+- `Task.passes` reads back every pass of a kind: what it was started with, how it ended, its
+  counts and its spend. A pass killed before it ended is listed too.
+- `Task.keys` with no endings lists every unit a task has seen, including units that were
+  only ever unfinished or held.
+- `run_pass` takes a short `note`, kept with the pass and returned by `Task.passes`. State
+  files of older layouts upgrade when opened, with no note on their passes.
 
 ### Changed
 
+- State files move to layout 3. Opening a task with this version upgrades its file in place,
+  and 2026.11.0 can no longer open it, even if this version only read it.
 - Tests now have time limits: 2 seconds for one test and 45 seconds for the whole run. A test
   marked `slow` is exempt and runs only with `pixi run test-slow`. CI is one job that runs only
   on pull requests that are ready for review, not on drafts or on pushes to `main`.

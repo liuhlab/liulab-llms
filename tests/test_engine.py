@@ -23,6 +23,7 @@ from labllm import (
     Held,
     Inputs,
     Model,
+    Pass,
     ProviderExhausted,
     ProviderUnavailable,
     Role,
@@ -191,6 +192,26 @@ def test_a_held_unit_records_its_reason_and_changes_nothing(task: Task) -> None:
     assert (current.ending, current.stamp.pass_id) == ("settled", 1)
 
 
+def test_keys_with_no_endings_lists_every_key_seen_unfinished_and_held_included(
+    task: Task,
+) -> None:
+    def held_c(key: str) -> Inputs:
+        if key == "c":
+            raise Held("later")
+        return loader(TEXTS)(key)
+
+    def fails_on_b(u: Unit) -> Any:
+        if u.key == "b":
+            raise RuntimeError("a bug in the kind")
+        return split(u)
+
+    k = kind(load=held_c, run=fails_on_b)
+    run(task, k, ["c", "b", "a"])
+    assert task.keys(k) == ["a", "b", "c"]
+    assert task.keys(k, endings=["settled"]) == ["a"]
+    assert task.keys(kind(name="other")) == []
+
+
 def test_an_error_in_the_kind_ends_that_unit_unfinished_and_the_pass_goes_on(task: Task) -> None:
     def fails_on_b(u: Unit) -> Any:
         if u.key == "b":
@@ -323,6 +344,86 @@ def test_a_stop_ends_the_remaining_units_unfinished_with_the_reason(task: Task) 
     assert "ceiling_reached" in (c.reason or "")
 
 
+def test_a_kinds_passes_read_back_oldest_first_with_their_notes(task: Task) -> None:
+    stopped = task.run_pass(
+        kind(),
+        ["a", "b", "c"],
+        models={"writer": WRITER},
+        ceiling_usd=0.06,
+        label="small",
+        units_at_once=1,
+        note="store build 7",
+    )
+    ended = task.run_pass(
+        kind(version="2"),
+        ["a", "b", "c"],
+        models={"writer": WRITER},
+        ceiling_usd=1.0,
+        label="split",
+        off_peak_only=True,
+    )
+    first, second = task.passes(kind())
+    assert first == Pass(
+        pass_id=stopped.pass_id,
+        meter=stopped.meter,
+        kind="split",
+        kind_version="1",
+        label="small",
+        note="store build 7",
+        models={"writer": WRITER},
+        ceiling_usd=0.06,
+        off_peak_only=False,
+        repo_version=task.outcomes(kind(), "a")[0].stamp.repo_version,
+        labllm_version=labllm.__version__,
+        ended=True,
+        stopped="ceiling_reached",
+        counts={"settled": 1, "unsettled": 0, "refused": 0, "unfinished": 2, "held": 0},
+        spent_usd=stopped.spent_usd,
+        first_cost_usd=stopped.first_cost_usd,
+        requests=1,
+        cache_hits=0,
+    )
+    # a's 27-character reply, at 0.001 an output token.
+    assert (first.spent_usd, first.first_cost_usd) == pytest.approx((0.027, 0.027))
+    assert (second.pass_id, second.meter, second.kind_version) == (ended.pass_id, ended.meter, "2")
+    assert (second.label, second.note, second.ceiling_usd, second.off_peak_only) == (
+        "split",
+        None,
+        1.0,
+        True,
+    )
+    assert (second.ended, second.stopped, second.counts) == (True, None, ended.counts)
+    # a replays free; b's 19-character reply and c's 34 are paid now.
+    assert (second.spent_usd, second.first_cost_usd) == pytest.approx((0.053, 0.08))
+    assert (second.requests, second.cache_hits) == (2, 1)
+    assert task.passes(kind(name="other")) == []
+
+
+def test_an_interrupted_pass_is_listed_with_the_counters_of_the_units_it_finished(
+    task: Task,
+) -> None:
+    def interrupted_at_c(u: Unit) -> Any:
+        if u.key == "c":
+            raise KeyboardInterrupt
+        return split(u)
+
+    k = kind(run=interrupted_at_c)
+    with pytest.raises(KeyboardInterrupt):
+        run(task, k, ["a", "b", "c"], units_at_once=1)
+    (interrupted,) = task.passes(k)
+    assert (interrupted.ended, interrupted.stopped) == (False, None)
+    assert interrupted.counts == {
+        "settled": 2,
+        "unsettled": 0,
+        "refused": 0,
+        "unfinished": 0,
+        "held": 0,
+    }
+    # a's 27-character reply and b's 19, at 0.001 an output token.
+    assert (interrupted.spent_usd, interrupted.first_cost_usd) == pytest.approx((0.046, 0.046))
+    assert (interrupted.requests, interrupted.cache_hits) == (2, 0)
+
+
 def test_rerunning_after_deleting_the_state_file_rebuilds_the_answers_from_the_cache(
     tmp_path: Path, fake: FakeGateway
 ) -> None:
@@ -345,7 +446,7 @@ def test_a_state_file_of_an_unknown_layout_is_refused(tmp_path: Path, fake: Fake
     with sqlite3.connect(t.path) as db:  # what a newer liulab-llms would leave
         db.execute("PRAGMA user_version = 99")
     db.close()
-    with pytest.raises(UnknownLayout, match="layout 99, newer than layout 2"):
+    with pytest.raises(UnknownLayout, match="layout 99, newer than layout 3"):
         open_task(tmp_path, fake)
     t.path.write_text("not a database")
     with pytest.raises(UnknownLayout, match="not a task's state file"):
@@ -354,21 +455,30 @@ def test_a_state_file_of_an_unknown_layout_is_refused(tmp_path: Path, fake: Fake
     open_task(tmp_path, fake).close()  # the refusals left nothing holding the task
 
 
-def test_a_state_file_of_an_older_layout_is_upgraded(tmp_path: Path, fake: FakeGateway) -> None:
+@pytest.mark.parametrize("layout", [1, 2])
+def test_a_state_file_of_an_older_layout_is_upgraded(
+    tmp_path: Path, fake: FakeGateway, layout: int
+) -> None:
     (tmp_path / "task").mkdir()
     with sqlite3.connect(tmp_path / "task" / "state.sqlite") as db:
-        db.executescript((Path(__file__).parent / "data" / "layout-1.sql").read_text())
+        db.executescript((Path(__file__).parent / "data" / f"layout-{layout}.sql").read_text())
     db.close()
     with open_task(tmp_path, fake) as t:
         old = t.current(kind(), "a")
-        run(t, kind(), ["a"])
+        run(t, kind(), ["a"], note="after the upgrade")
         new = t.current(kind(), "a")
+        passes = t.passes(kind())
     assert old is not None
     assert new is not None
-    assert (old.ending, old.answer, old.cost) == ("settled", {"words": ["red", "green"]}, None)
+    assert (old.ending, old.answer) == ("settled", {"words": ["red", "green"]})
+    assert (old.cost is None) == (layout == 1)
     assert (new.stamp.pass_id, new.answer) == (2, old.answer)
     assert new.cost is not None
     assert new.cost.requests == 1
+    assert [(p.pass_id, p.note, p.ended, p.requests) for p in passes] == [
+        (1, None, True, 1),
+        (2, "after the upgrade", True, 1),
+    ]
 
 
 #: Holds a task from another process until stdin closes. A line "pass" makes it try a pass.
