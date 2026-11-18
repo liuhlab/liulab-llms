@@ -19,6 +19,13 @@ sets one.
   marked `slow` is exempt and runs only with `pixi run test-slow`. CI is one job that runs only
   on pull requests that are ready for review, not on drafts or on pushes to `main`.
 
+### Fixed
+
+- A pass stops at the first request the gateway rejects, such as one for a misspelled model,
+  unless the unit kind's code catches the error. Before, every unit sent the same bad request
+  and the pass reported that it ran to its end. The stop reason is `rejected`, and the new
+  `stop_message` in a pass's result holds the message of the error that stopped it.
+
 ## [2026.11.0] - 2026-11-09
 
 The first release.

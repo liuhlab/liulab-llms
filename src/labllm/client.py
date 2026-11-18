@@ -245,10 +245,10 @@ class Meter:
         self.cache_hits = 0
         self._gateway = gateway
         self._lock = threading.Lock()
-        self._stopped: Stopped | None = None
+        self._stopped: Stopped | Rejected | None = None
         self._wake = threading.Event()
 
-    def stop(self, error: Stopped) -> None:
+    def stop(self, error: Stopped | Rejected) -> None:
         """Send no further call. Calls already sent finish.
 
         Each later call, and each one waiting out peak hours, raises `error`'s class with its

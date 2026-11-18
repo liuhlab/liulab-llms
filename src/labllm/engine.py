@@ -127,7 +127,7 @@ class _Refuse(BaseException):
 
 
 class _Stop:
-    """A pass's stop: the first `Stopped` error any of its units met.
+    """A pass's stop: the first `Stopped` error a unit met, or `Rejected` its kind let escape.
 
     It stops the pass's meter too, which ends at once any call waiting out peak hours.
     """
@@ -135,9 +135,9 @@ class _Stop:
     def __init__(self, meter: Meter) -> None:
         self._lock = threading.Lock()
         self._meter = meter
-        self.error: Stopped | None = None
+        self.error: Stopped | Rejected | None = None
 
-    def halt(self, error: Stopped) -> None:
+    def halt(self, error: Stopped | Rejected) -> None:
         with self._lock:
             if self.error is not None:
                 return
@@ -216,7 +216,7 @@ class Unit:
     def _send[R: ChatReply | JevReply](self, call: Callable[[], R]) -> R:
         try:
             self._stop.check()
-        except Stopped as e:
+        except (Stopped, Rejected) as e:
             self._met(str(e))
             raise
         with self._lock:
@@ -232,6 +232,8 @@ class Unit:
                 self._stop.halt(e)
                 # A call the stop ended unsent says so as a call never sent does.
                 self._met(str(e) if str(e) == self._stop.message else f"{e.reason}: {e}")
+            elif str(e) == self._stop.message:
+                self._met(str(e))  # the meter, stopped by a rejection, did not send it
             raise
         with self._lock:
             self._spent += reply.cost_usd
@@ -311,14 +313,16 @@ class PassResult:
     """What a pass returns. The calling command sets its own exit code from it.
 
     `counts` has every ending and not-ending a pass gives, zeros included. `stopped` is the
-    reason of the `Stopped` error that stopped the pass, or None. The dollars, requests and
-    cache hits are the pass's meter's counters, each the sum of its units'.
+    reason of the error that stopped the pass, a `Stopped` or a `Rejected` one, and
+    `stop_message` its message; both are None if the pass ran to its end. The dollars,
+    requests and cache hits are the pass's meter's counters, each the sum of its units'.
     """
 
     pass_id: int
     meter: str
     counts: dict[str, int]
     stopped: str | None
+    stop_message: str | None
     spent_usd: float
     first_cost_usd: float
     requests: int
@@ -425,10 +429,11 @@ class Task:
         `units_at_once` units run at once, each on its own thread, so the kind's function must
         be safe to run on many threads. Each unit's outcome and cost are recorded as it ends.
 
-        A `Stopped` error stops the pass. Calls already sent finish and are paid; no new call
-        is sent and no new unit starts. The unit that met the error, every unit that then
-        tries a call, and every unit not started end unfinished, with the reason recorded.
-        A unit that needs no further call keeps its ending.
+        A `Stopped` error stops the pass, and so does a `Rejected` one that escapes the kind's
+        function; a kind that catches it decides that unit alone. Calls already sent finish
+        and are paid; no new call is sent and no new unit starts. The unit that met the error,
+        every unit that then tries a call, and every unit not started end unfinished, with the
+        reason recorded. A unit that needs no further call keeps its ending.
 
         With `off_peak_only`, a call that meets peak hours waits until they end, then goes
         out; a stop ends that wait at once.
@@ -507,6 +512,7 @@ class Task:
             meter=meter.id,
             counts=counts,
             stopped=stopped,
+            stop_message=None if stop.error is None else str(stop.error),
             spent_usd=meter.spent_usd,
             first_cost_usd=meter.first_cost_usd,
             requests=meter.requests,
@@ -546,7 +552,7 @@ class Task:
                 ended.ending = "unsettled" if failed else "settled"
         except Held as h:
             ended = _Ended("held", ended.inputs_tag, reason=str(h), checks=ended.checks)
-        except Stopped as e:
+        except (Stopped, Rejected) as e:
             stop.halt(e)
             reason = f"{e.reason}: {e}"
             ended = _Ended("unfinished", ended.inputs_tag, reason=reason, checks=ended.checks)
