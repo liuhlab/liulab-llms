@@ -378,11 +378,13 @@ def test_a_kinds_passes_read_back_oldest_first_with_their_notes(task: Task) -> N
         ended=True,
         stopped="ceiling_reached",
         counts={"settled": 1, "unsettled": 0, "refused": 0, "unfinished": 2, "held": 0},
-        spent_usd=pytest.approx(0.027),
-        first_cost_usd=pytest.approx(0.027),
+        spent_usd=stopped.spent_usd,
+        first_cost_usd=stopped.first_cost_usd,
         requests=1,
         cache_hits=0,
     )
+    # a's 27-character reply, at 0.001 an output token.
+    assert (first.spent_usd, first.first_cost_usd) == pytest.approx((0.027, 0.027))
     assert (second.pass_id, second.meter, second.kind_version) == (ended.pass_id, ended.meter, "2")
     assert (second.label, second.note, second.ceiling_usd, second.off_peak_only) == (
         "split",

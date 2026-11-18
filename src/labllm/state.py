@@ -566,7 +566,9 @@ class StateFile:
                 "GROUP BY pass_id, ending",
                 (kind,),
             ).fetchall()
-        counts = {row[0]: dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0) for row in rows}
+        counts: dict[int, dict[str, int]] = {
+            row[0]: dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0) for row in rows
+        }
         for pass_id, ending, n in counted:
             counts[pass_id][ending] = n
         passes = []
