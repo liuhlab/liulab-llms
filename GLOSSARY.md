@@ -63,7 +63,8 @@ _Avoid_: night mode, discount mode
 
 One run of a unit kind over the keys it is given, in that order, under one meter. It records
 each unit's outcome and returns counts per ending. Rerunning the same command starts a new
-pass whose finished calls replay free, which is how a stopped pass resumes.
+pass whose finished calls replay free, which is how a stopped pass resumes. A pass may carry
+a note, a short text from whoever started it; a dropped unit's note is a different thing.
 _Avoid_: run, batch, job, round
 
 ### Rate limit

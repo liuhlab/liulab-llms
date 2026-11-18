@@ -21,6 +21,8 @@ sets one.
 
 ### Changed
 
+- State files move to layout 3. Opening a task with this version upgrades its file in place,
+  and 2026.11.0 can no longer open it, even if this version only read it.
 - Tests now have time limits: 2 seconds for one test and 45 seconds for the whole run. A test
   marked `slow` is exempt and runs only with `pixi run test-slow`. CI is one job that runs only
   on pull requests that are ready for review, not on drafts or on pushes to `main`.
