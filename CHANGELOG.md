@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.2] - 2026-11-18
+
 ### Added
 
 - `run_pass` takes `on_end`, a function it calls once for each unit as the unit's outcome is
