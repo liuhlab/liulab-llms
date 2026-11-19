@@ -14,7 +14,7 @@ from labllm.errors import (
 )
 from labllm.model import Model
 from labllm.reviews import ChecksFailed, Review, Reviews
-from labllm.state import CheckResult, Outcome, Stamp, TaskInUse, UnitCost, UnknownLayout
+from labllm.state import CheckResult, Outcome, Pass, Stamp, TaskInUse, UnitCost, UnknownLayout
 
 #: Read from the installed distribution's metadata, which hatch-vcs fills from the newest
 #: git tag. No version string is written by hand anywhere in this repo.
@@ -33,6 +33,7 @@ __all__ = [
     "Meter",
     "Model",
     "Outcome",
+    "Pass",
     "PassResult",
     "ProviderExhausted",
     "ProviderUnavailable",
