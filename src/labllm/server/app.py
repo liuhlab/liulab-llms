@@ -74,6 +74,8 @@ def retry_after_s(headers: Mapping[str, str] | None) -> float | None:
 #: Sends one request form to a provider, once. It raises `ProviderUnavailable` for a failure
 #: worth another attempt, with the provider's overload shape; another `Stopped` subclass or
 #: `Rejected` for one the caller must see at once. The seam where tests play the provider.
+#: A provider that sends more input than its form holds has an `as_sent(form)` method, which
+#: returns the form as it is sent; the call's reservation counts that one.
 Provider = Callable[[dict[str, Any]], Attempt]
 
 
@@ -180,7 +182,8 @@ class Server:
         self, call: wire.Call, key: str, started: float, provider: Provider
     ) -> dict[str, Any]:
         form = call.form
-        reserve = largest_cost(self._prices.price(form), form)
+        as_sent = getattr(provider, "as_sent", None)
+        reserve = largest_cost(self._prices.price(form), as_sent(form) if as_sent else form)
         gate, pause = self._gate(form)
         tokens = estimate_input_tokens(form)
         arrival = next(self._arrivals)

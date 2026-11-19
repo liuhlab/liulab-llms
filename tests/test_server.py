@@ -1,5 +1,6 @@
 """The gateway server through its HTTP route, beyond what the shared call-layer suite covers."""
 
+import copy
 import dataclasses
 import functools
 import json
@@ -39,7 +40,7 @@ from labllm.peak import MARGIN_S
 from labllm.retry import BUDGET_S
 from labllm.server import Attempt, Prices, Provider, Record, Server
 from labllm.server.__main__ import main
-from labllm.server.chat import LiteLLMChat
+from labllm.server.chat import LiteLLMChat, request
 from labllm.server.jev import TypeSafeJev
 from labllm.server.limits import RateLimit
 from labllm.server.prices import litellm
@@ -48,6 +49,11 @@ from labllm.testing import FakeClock, Price
 
 DEEPSEEK = "deepseek-v4-flash"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+#: What a provider asked for JSON mode is told when no message says "json", for `SCHEMA`.
+INSTRUCTION = (
+    "Answer in JSON that fits this schema:\n"
+    '{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}'
+)
 
 
 @pytest.fixture
@@ -231,6 +237,35 @@ def test_the_reservation_counts_the_schema_and_system_prompt_as_input(conninfo: 
     assert calls == []
 
 
+class EmptyRecord(Record):
+    """A record with no exchange in it and no database under it, for a call refused unsent."""
+
+    def __init__(self) -> None:
+        pass
+
+    def entry(self, key: str) -> None:
+        return None
+
+    def spent(self, meter: str) -> float:
+        return 0.0
+
+
+def test_the_reservation_counts_the_instruction_a_json_mode_call_is_sent() -> None:
+    completion = Completion()
+    prices = Prices({"by-input": Price(input_usd_per_token=0.001, output_usd_per_token=0.0)})
+    chat = LiteLLMChat(prices, completion=completion)
+    server = Server(EmptyRecord(), prices, {"chat": chat}, clock=FakeClock())
+    form = wire.chat_form(Model("deepseek", "by-input"), user="hello", system=None, schema=SCHEMA)
+    sent = [{"role": "system", "content": INSTRUCTION}, {"role": "user", "content": "hello"}]
+    input_usd = len(json.dumps(sent, separators=(",", ":")).encode()) * 0.001
+    # The ceiling is one byte short of the messages DeepSeek would be sent.
+    meter = {"meter": "m1", "label": "input", "ceiling_usd": input_usd - 0.001}
+    call = wire.Call(form=form, off_peak_only=False, person="ann", repo="tests", tag=None, **meter)
+    with pytest.raises(CeilingReached):
+        wire.decode_response(*server.answer("/chat", call.encode()))
+    assert completion.sent == []
+
+
 def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conninfo: str) -> None:
     calls: list[str] = []
     provider = stand_in(lambda form: calls.append("sent") or "abc", {"gpt-5.5": Price(0, 0)})
@@ -312,6 +347,73 @@ def test_openai_gets_one_attempt_and_native_schema_output(conninfo: str) -> None
     (sent,) = completion.sent
     assert sent["max_retries"] == 0
     assert sent["reasoning_effort"] == "low"
+    assert sent["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "answer", "schema": SCHEMA, "strict": True},
+    }
+
+
+def chat_form(
+    provider: str,
+    *,
+    user: str = "hello",
+    system: str | None = None,
+    schema: dict[str, Any] | None = SCHEMA,
+) -> dict[str, Any]:
+    """The request form of a chat call to a model of `provider`."""
+    return wire.chat_form(Model(provider, "a-model"), user=user, system=system, schema=schema)
+
+
+def test_json_mode_with_no_json_in_a_message_gets_an_instruction_carrying_the_schema() -> None:
+    sent = request(chat_form("deepseek"))
+    assert sent["response_format"] == {"type": "json_object"}
+    assert sent["messages"] == [
+        {"role": "system", "content": INSTRUCTION},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_the_instruction_follows_the_forms_own_system_text_in_one_system_message() -> None:
+    sent = request(chat_form("deepseek", system="Be brief."))
+    assert sent["messages"] == [
+        {"role": "system", "content": "Be brief.\n\n" + INSTRUCTION},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("user", "system", "schema"),
+    [
+        ("Answer in JSON.", None, SCHEMA),
+        ("hello", "Reply as Json, briefly.", SCHEMA),
+        ("hello", "Be brief.", None),
+    ],
+)
+def test_a_form_that_says_json_or_has_no_schema_is_sent_its_own_messages(
+    user: str, system: str | None, schema: dict[str, Any] | None
+) -> None:
+    form = chat_form("deepseek", user=user, system=system, schema=schema)
+    sent = request(form)
+    assert sent["messages"] == form["messages"]
+    assert sent.get("response_format") == (None if schema is None else {"type": "json_object"})
+
+
+def test_one_form_always_gives_one_request_and_keeps_its_cache_key() -> None:
+    form = chat_form("deepseek")
+    before = copy.deepcopy(form)
+    assert request(form) == request(form)
+    assert form == before
+    # Its key as of c3e4893: nothing the gateway adds for a provider may change it.
+    assert wire.cache_key(form) == (
+        "c9cfd6f65fe0c4c44d2fda40b82a2acb342fa66fceca1f8cdd728a274a4114f8"
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+def test_a_provider_that_takes_a_schema_is_sent_the_forms_own_messages(provider: str) -> None:
+    form = chat_form(provider)
+    sent = request(form)
+    assert sent["messages"] == form["messages"]
     assert sent["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "answer", "schema": SCHEMA, "strict": True},

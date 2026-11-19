@@ -25,6 +25,9 @@ _USED_UP = {
     "anthropic": ("credit balance is too low", "reached your specified api usage limits"),
 }
 
+#: What a provider asked for JSON mode is told, followed by the form's schema as JSON.
+_JSON_INSTRUCTION = "Answer in JSON that fits this schema:\n"
+
 
 class LiteLLMChat:
     """Sends a chat form through `litellm.completion`, once, with no retry of its own.
@@ -44,6 +47,10 @@ class LiteLLMChat:
     def __init__(self, prices: Prices, *, completion: Callable[..., Any] | None = None) -> None:
         self._prices = prices
         self._completion = completion
+
+    def as_sent(self, form: dict[str, Any]) -> dict[str, Any]:
+        """Return `form` with the messages its provider is sent, for its reservation to count."""
+        return {**form, "messages": _messages(form)}
 
     def __call__(self, form: dict[str, Any]) -> Attempt:
         """Send `form` once and return what came back.
@@ -113,9 +120,10 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     """Return the arguments to `litellm.completion` for a chat form.
 
     DeepSeek takes `thinking` on or off and its effort level, which LiteLLM would drop, in the
-    request body; it takes JSON mode, not a schema. Other providers get the schema as native
-    schema output and the effort as `reasoning_effort`, and refuse `thinking`. OpenAI's own
-    client retries unless told not to.
+    request body; it takes JSON mode, not a schema. JSON mode is refused unless a message says
+    "json", so a form that never says it is sent an instruction carrying its schema. Other
+    providers get the schema as native schema output and the effort as `reasoning_effort`, and
+    refuse `thinking`. OpenAI's own client retries unless told not to.
 
     Raises
     ------
@@ -127,7 +135,7 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
         raise Rejected("Jev calls take the jev route")
     kwargs: dict[str, Any] = {
         "model": f"{provider}/{form['model']}",
-        "messages": form["messages"],
+        "messages": _messages(form),
         "max_tokens": settings["max_output_tokens"],
     }
     if settings["temperature"] is not None:
@@ -152,3 +160,23 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     if provider == "openai":
         kwargs["max_retries"] = 0
     return kwargs
+
+
+def _messages(form: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the messages a chat form's provider is sent, leaving the form as it is.
+
+    A form that gets JSON mode and says "json" in no message has `_JSON_INSTRUCTION` and its
+    schema added: after its own system text, or as a new first message.
+    """
+    messages, schema = form["messages"], form.get("schema")
+    if (
+        form["provider"] != "deepseek"
+        or schema is None
+        or any("json" in m["content"].lower() for m in messages)
+    ):
+        return messages
+    told = _JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+    if messages and messages[0]["role"] == "system":
+        system, *rest = messages
+        return [{**system, "content": f"{system['content']}\n\n{told}"}, *rest]
+    return [{"role": "system", "content": told}, *messages]
