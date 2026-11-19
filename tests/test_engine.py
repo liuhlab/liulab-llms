@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,7 @@ import labllm
 from harness import DEEPSEEK_OFF_PEAK, HOUR, MONDAY
 from labllm import (
     CeilingReached,
+    Gateway,
     GatewayUnreachable,
     Held,
     Inputs,
@@ -26,6 +27,7 @@ from labllm import (
     Pass,
     ProviderExhausted,
     ProviderUnavailable,
+    Rejected,
     Role,
     Stopped,
     Task,
@@ -344,6 +346,64 @@ def test_a_stop_ends_the_remaining_units_unfinished_with_the_reason(task: Task) 
     assert "ceiling_reached" in (c.reason or "")
 
 
+class Counting:
+    """A transport to `fake` that counts the requests reaching it."""
+
+    def __init__(self, fake: FakeGateway) -> None:
+        self.fake, self.sent = fake, 0
+
+    def send(self, path: str, body: bytes) -> tuple[int, bytes]:
+        self.sent += 1
+        return self.fake.send(path, body)
+
+
+def test_a_rejected_call_the_kind_does_not_catch_stops_the_pass(
+    tmp_path: Path, fake: FakeGateway
+) -> None:
+    gateway = Counting(fake)
+    client = Gateway(repo="tests", transport=gateway, clock=fake.clock)
+    with Task(tmp_path / "task", gateway=client, reviews=tmp_path / "reviews") as t:
+        result = t.run_pass(
+            kind(),
+            ["a", "b", "c"],
+            models={"writer": Model("openai", "test-unpriced", max_output_tokens=50)},
+            ceiling_usd=1.0,
+            label="misspelled",
+            units_at_once=1,
+        )
+        (a,), (b,), (c,) = (t.outcomes(kind(), key) for key in "abc")
+    assert gateway.sent == 1
+    assert result.stopped == "rejected"
+    assert "test-unpriced" in (result.stop_message or "")
+    assert result.counts["unfinished"] == 3
+    assert (a.ending, a.reason) == ("unfinished", f"rejected: {result.stop_message}")
+    for o in (b, c):
+        assert (o.ending, o.reason) == ("unfinished", "the pass stopped: rejected")
+
+
+def test_a_kind_that_refuses_a_unit_for_its_rejected_call_does_not_stop_the_pass(
+    tmp_path: Path,
+) -> None:
+    def no_blue(form: dict[str, Any]) -> str:
+        if form["messages"][-1]["content"] == "blue":
+            raise Rejected("blue is too long for the model")
+        return split_words(form)
+
+    def refuse_rejected(u: Unit) -> Any:
+        try:
+            return split(u)
+        except Rejected as e:
+            u.refuse("rejected", str(e))
+
+    with open_task(tmp_path, FakeGateway(no_blue, prices=PRICES)) as t:
+        k = kind(run=refuse_rejected)
+        result = run(t, k, ["a", "b", "c"], units_at_once=1)
+        (b,) = t.outcomes(k, "b")
+    assert (result.stopped, result.stop_message) == (None, None)
+    assert result.counts == {"settled": 2, "unsettled": 0, "refused": 1, "unfinished": 0, "held": 0}
+    assert (b.ending, b.reason) == ("refused", "blue is too long for the model")
+
+
 def test_a_kinds_passes_read_back_oldest_first_with_their_notes(task: Task) -> None:
     stopped = task.run_pass(
         kind(),
@@ -621,7 +681,7 @@ def _gateway_goes(fake: FakeGateway) -> None:
     raise GatewayUnreachable("the gateway went away mid-call")
 
 
-def _raises(error: type[Stopped]) -> Any:
+def _raises(error: type[Stopped | Rejected]) -> Any:
     def trigger(fake: FakeGateway) -> None:
         raise error("the provider says no")
 
@@ -633,7 +693,15 @@ STOPS = {
     "provider_exhausted": _raises(ProviderExhausted),
     "provider_unavailable": _raises(ProviderUnavailable),
     "gateway_unreachable": _gateway_goes,
+    "rejected": _raises(Rejected),
 }
+
+
+def _until(done: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + MEET_S
+    while not done():
+        assert time.monotonic() < deadline, "the engine never got there"
+        time.sleep(0.001)
 
 
 @pytest.mark.parametrize("reason", sorted(STOPS))
@@ -641,9 +709,8 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
     tmp_path: Path, reason: str
 ) -> None:
     meet = threading.Barrier(3, timeout=MEET_S)
-    stopped = threading.Event()
-
     tries_of_c: list[str] = []
+    blocked: list[str] = []
 
     def provider(form: dict[str, Any]) -> str:
         text = form["messages"][-1]["content"]
@@ -654,19 +721,16 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
         if text == "word c":
             STOPS[reason](fake)
         if text in ("word a", "word b"):
-            assert stopped.wait(MEET_S)
+            _until(lambda: bool(t.outcomes(k, "c")))  # c has ended, so the pass has stopped
         return split_words(form)
 
     def in_flight(u: Unit) -> Any:
-        try:
-            answer = split(u)
-        except Stopped:
-            stopped.set()
-            raise
+        answer = split(u)
         if u.key == "a":
             try:
                 u.chat("writer", user="a second call")
-            except Stopped:
+            except (Stopped, Rejected) as e:
+                blocked.append(e.reason)
                 return answer  # its code swallows the stop
         return answer
 
@@ -676,6 +740,9 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
         result = run(t, k, list("abcdef"), units_at_once=3)
         outcomes = {key: t.outcomes(k, key) for key in "abcdef"}
     assert result.stopped == reason
+    said = "the gateway went away" if reason == "gateway_unreachable" else "the provider says no"
+    assert said in (result.stop_message or "")
+    assert blocked == [reason]
     assert result.counts == {"settled": 1, "unsettled": 0, "refused": 0, "unfinished": 5, "held": 0}
     assert {key: [o.ending for o in os] for key, os in outcomes.items()} == {
         "a": ["unfinished"],
