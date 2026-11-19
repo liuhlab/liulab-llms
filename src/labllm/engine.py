@@ -330,6 +330,20 @@ class PassResult:
     cache_hits: int
 
 
+@dataclass(frozen=True)
+class UnitEnd:
+    """What `run_pass` passes to `on_end` for one unit: its key, and what the task recorded.
+
+    `ending`, `reason` and `cost` equal the unit's outcome in that pass, as `Task.outcomes`
+    reads it back.
+    """
+
+    key: str
+    ending: str
+    reason: str | None
+    cost: UnitCost
+
+
 @dataclass
 class _Ended:
     ending: str
@@ -425,6 +439,7 @@ class Task:
         off_peak_only: bool = False,
         units_at_once: int = 32,
         note: str | None = None,
+        on_end: Callable[[UnitEnd], None] | None = None,
     ) -> PassResult:
         """Run `kind` over `keys`, starting them in the order given, under one new meter.
 
@@ -442,6 +457,12 @@ class Task:
         With `off_peak_only`, a call that meets peak hours waits until they end, then goes
         out; a stop ends that wait at once.
 
+        `on_end`, if given, is called once per unit with a `UnitEnd`, after its outcome is
+        recorded: on the thread that ran the unit, or, for units the stop never started, on
+        the calling thread, in key order. Calls never overlap, so it needs no lock of its own;
+        it should return quickly. If it raises, it is not called again, the pass runs and is
+        recorded as without it, and `run_pass` raises that first error once the pass has ended.
+
         Raises
         ------
         ValueError
@@ -449,6 +470,8 @@ class Task:
             `units_at_once` is below one.
         TypeError
             A key is not a string.
+        Exception
+            The first error `on_end` raised, once the pass has ended.
         """
         if units_at_once < 1:
             raise ValueError(f"units_at_once must be one or more, not {units_at_once}")
@@ -477,6 +500,19 @@ class Task:
         counts: dict[str, int] = dict.fromkeys((*PASS_ENDINGS, *NOT_ENDINGS), 0)
         lock = threading.Lock()
         stop = _Stop(meter)
+        hearing = threading.Lock()
+        deaf: list[Exception] = []  # the hook's first error; it is not called again
+
+        def heard(end: UnitEnd) -> None:
+            if on_end is None:
+                return
+            with hearing:
+                if deaf:
+                    return
+                try:
+                    on_end(end)
+                except Exception as e:
+                    deaf.append(e)
 
         def work(key: str) -> None:
             ended = self._run_unit(kind, key, meter, models, stop)
@@ -493,6 +529,7 @@ class Task:
             )
             with lock:
                 counts[ended.ending] += 1
+            heard(UnitEnd(key, ended.ending, ended.reason, ended.cost))
 
         rest = iter(keys)
         with meter:
@@ -500,10 +537,11 @@ class Task:
         stopped = stop.reason
         unstarted = list(rest)
         if unstarted:
-            self._state.record_unstarted(
-                kind.name, unstarted, pass_id, reason=f"the pass stopped: {stopped}"
-            )
+            reason = f"the pass stopped: {stopped}"
+            self._state.record_unstarted(kind.name, unstarted, pass_id, reason=reason)
             counts["unfinished"] += len(unstarted)
+            for key in unstarted:
+                heard(UnitEnd(key, "unfinished", reason, UnitCost()))
         self._state.end_pass(
             pass_id,
             stopped=stopped,
@@ -512,6 +550,8 @@ class Task:
             requests=meter.requests,
             cache_hits=meter.cache_hits,
         )
+        if deaf:
+            raise deaf[0]
         return PassResult(
             pass_id=pass_id,
             meter=meter.id,

@@ -41,6 +41,8 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.engine.PassResult
 
+::: labllm.engine.UnitEnd
+
 ::: labllm.state.Pass
 
 ::: labllm.state.Outcome
