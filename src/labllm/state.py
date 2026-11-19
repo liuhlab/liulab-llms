@@ -322,8 +322,8 @@ class Pass:
 
     The fields up to `labllm_version` are what the pass was started with; `note` is None if it
     was given none. `ended` is False for a pass that has not ended: one still running, or one
-    whose process was killed or interrupted. `stopped` is the reason of the `Stopped` error
-    that stopped it, or None. `counts` has every ending and not-ending a pass gives, zeros
+    whose process was killed or interrupted. `stopped` is the reason of the error that
+    stopped it, a `Stopped` or a `Rejected` one, or None. `counts` has every ending and not-ending a pass gives, zeros
     included, over the units it recorded. The dollars, requests and cache hits are its meter's
     counters, or, for a pass that has not ended, the sums over the units it recorded.
     """
