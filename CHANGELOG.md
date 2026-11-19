@@ -7,6 +7,14 @@ sets one.
 
 ## [Unreleased]
 
+### Fixed
+
+- A chat call with a `schema` to a DeepSeek model no longer fails when its prompt lacks the
+  word "json". DeepSeek takes no schema, so the gateway asks it for JSON, and DeepSeek refuses
+  that unless a message says "json". When none does, the gateway now adds one instruction
+  that carries the schema. No cache key changes. The fix arrives with an upgrade of the lab
+  gateway and needs no new client.
+
 ## [2026.11.2] - 2026-11-18
 
 ### Added

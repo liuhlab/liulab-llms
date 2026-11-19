@@ -282,7 +282,9 @@ class Meter:
     ) -> ChatReply:
         """Send one chat request and wait for its reply.
 
-        `schema` is a plain JSON Schema dictionary, sent and hashed exactly as written.
+        `schema` is a plain JSON Schema dictionary, sent and hashed exactly as written. A
+        provider with JSON mode only, such as DeepSeek, is asked for JSON instead; the gateway
+        sends it the schema, in an added instruction, only if no message says "json".
         `tag` joins the call's cost to the caller's own row; it never changes the cache key.
         """
         r = self._call(wire.chat_form(model, user=user, system=system, schema=schema), tag)
