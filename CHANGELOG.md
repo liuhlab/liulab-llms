@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.1] - 2026-11-18
+
 ### Added
 
 - A tutorial that walks one unit kind from its declaration through a pass, a pass with a
