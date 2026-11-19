@@ -761,6 +761,82 @@ def test_a_stop_lets_calls_in_flight_finish_and_sends_no_new_call(
     assert result.spent_usd == pytest.approx(0.048)
 
 
+def _small_pass(t: Task, on_end: Any = None) -> Any:
+    """A pass the ceiling stops at b: a settles, b ends unfinished, c never starts."""
+    return t.run_pass(
+        kind(),
+        ["a", "b", "c"],
+        models={"writer": WRITER},
+        ceiling_usd=0.06,
+        label="small",
+        units_at_once=1,
+        on_end=on_end,
+    )
+
+
+def test_on_end_hears_each_unit_once_as_the_task_records_it(task: Task) -> None:
+    heard: list[labllm.UnitEnd] = []
+    result = _small_pass(task, heard.append)
+    assert (result.stopped, "UnitEnd" in labllm.__all__) == ("ceiling_reached", True)
+    assert [h.key for h in heard] == ["a", "b", "c"]
+    for h in heard:
+        (o,) = task.outcomes(kind(), h.key)
+        assert (h.ending, h.reason, h.cost) == (o.ending, o.reason, o.cost)
+    assert [h.ending for h in heard] == ["settled", "unfinished", "unfinished"]
+
+
+def test_on_end_calls_never_overlap(task: Task) -> None:
+    keys = list("abcd")
+    meet = threading.Barrier(len(keys), timeout=MEET_S)
+    busy = threading.Lock()
+    overlaps: list[str] = []
+
+    def together(u: Unit) -> Any:
+        meet.wait()
+        return split(u)
+
+    def hear(end: labllm.UnitEnd) -> None:
+        if not busy.acquire(blocking=False):
+            overlaps.append(end.key)
+            return
+        try:  # stay inside until every unit is recorded, so each could call now
+            _until(lambda: all(task.outcomes(k, key) for key in keys) or bool(overlaps))
+        finally:
+            busy.release()
+
+    k = kind(LETTERS, run=together)
+    result = run(task, k, keys, units_at_once=len(keys), on_end=hear)
+    assert result.counts["settled"] == len(keys)
+    assert overlaps == []
+
+
+def test_an_on_end_that_raises_costs_the_pass_nothing_and_its_error_is_raised_at_the_end(
+    tmp_path: Path, task: Task
+) -> None:
+    class HookError(Exception):
+        pass
+
+    heard: list[str] = []
+
+    def broken(end: labllm.UnitEnd) -> None:
+        heard.append(end.key)
+        raise HookError(end.key)
+
+    with pytest.raises(HookError, match="a"):
+        _small_pass(task, broken)
+    with open_task(tmp_path / "plain", FakeGateway(split_words, prices=PRICES)) as plain:
+        _small_pass(plain)
+
+        def recorded(t: Task) -> list[tuple[Any, ...]]:
+            outcomes = (o for key in "abc" for o in t.outcomes(kind(), key))
+            return [(o.key, o.ending, o.answer, o.reason, o.checks, o.cost) for o in outcomes]
+
+        assert recorded(task) == recorded(plain)
+    assert heard == ["a"]
+    (ran,) = task.passes(kind())
+    assert (ran.ended, ran.stopped) == (True, "ceiling_reached")
+
+
 #: The test's writer with DeepSeek's off-peak hours.
 NIGHT_WRITER = Model("deepseek", "test-night-writer", max_output_tokens=50)
 NIGHT_PRICES = {NIGHT_WRITER.name: Price(0.0, 0.001, off_peak=OffPeak.read(DEEPSEEK_OFF_PEAK))}

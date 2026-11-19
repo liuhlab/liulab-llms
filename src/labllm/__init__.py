@@ -3,7 +3,7 @@
 from importlib.metadata import version
 
 from labllm.client import ChatReply, Gateway, JevReply, Meter
-from labllm.engine import Held, Inputs, PassResult, QueueEntry, Role, Task, Unit, UnitKind
+from labllm.engine import Held, Inputs, PassResult, QueueEntry, Role, Task, Unit, UnitEnd, UnitKind
 from labllm.errors import (
     CeilingReached,
     GatewayUnreachable,
@@ -48,6 +48,7 @@ __all__ = [
     "TaskInUse",
     "Unit",
     "UnitCost",
+    "UnitEnd",
     "UnitKind",
     "UnknownLayout",
     "__version__",

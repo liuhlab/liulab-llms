@@ -7,6 +7,11 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `run_pass` takes `on_end`, a function it calls once for each unit as the unit's outcome is
+  recorded, with the unit's key, ending, reason and cost. A progress line can use it.
+
 ## [2026.11.1] - 2026-11-18
 
 ### Added
