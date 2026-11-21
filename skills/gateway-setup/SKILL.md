@@ -39,7 +39,7 @@ the current deployment, is [gcp.md](gcp.md).
 | `/etc/labllm/keys.env` | provider keys: root only, on the boot disk, so no backup holds them |
 | `/etc/labllm/settings.toml` | copied from `deploy/gateway/settings.toml`: the rate limits |
 | `labllm-postgres`, `labllm-gateway` | the two services, enabled at boot |
-| `labllm-dump.timer` | the nightly `pg_dump` to the backup bucket |
+| `labllm-dump.timer` | the nightly `pg_dump` to the backup bucket: a month's first under `monthly/`, kept three years, the rest under `nightly/`, kept 30 days |
 | `sudo labllm-db <tool>` | runs `psql`, `pg_dump` or `pg_restore` against the gateway's database |
 | account `tunnel` | lab members' public keys, in `/mnt/data/tunnel/authorized_keys` so a rebuild keeps them: a forward to port 8000, no shell |
 
@@ -113,7 +113,7 @@ it with `sudo labllm-db psql -d labllm_restored`, then quit that session and swa
 The swap renames both or neither; an open session on either database makes it fail:
 
 ```bash
-gcloud storage ls gs://<bucket>/
+gcloud storage ls gs://<bucket>/nightly/ gs://<bucket>/monthly/
 ssh llm-gateway 'sudo labllm-db createdb labllm_restored &&
   sudo gcloud storage cat gs://<bucket>/<dump> | sudo labllm-db pg_restore --no-owner -d labllm_restored'
 ssh llm-gateway 'sudo systemctl stop labllm-gateway &&
@@ -144,10 +144,11 @@ against the pin.
 ## Upgrade
 
 1. Snapshot the data disk ([gcp.md](gcp.md)).
-2. Move `GATEWAY_TAG` in the task file to the new release tag.
-3. Rerun the launch. It restarts both services; a call sent meanwhile waits and completes,
+2. `ssh llm-gateway df -h /mnt/data`: past half full, grow the disk ([gcp.md](gcp.md)).
+3. Move `GATEWAY_TAG` in the task file to the new release tag.
+4. Rerun the launch. It restarts both services; a call sent meanwhile waits and completes,
    since the library resends it for a minute.
-4. Run "Check it works".
+5. Run "Check it works".
 
 If the new lock moves PostgreSQL to a new major version, the server refuses the old data:
 dump, move `pgdata` aside, rerun the install, restore the dump.
