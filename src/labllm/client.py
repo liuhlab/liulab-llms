@@ -279,6 +279,7 @@ class Meter:
         system: str | None = None,
         schema: dict[str, Any] | None = None,
         tag: str | None = None,
+        replicate: int = 1,
     ) -> ChatReply:
         """Send one chat request and wait for its reply.
 
@@ -286,8 +287,11 @@ class Meter:
         provider with JSON mode only, such as DeepSeek, is asked for JSON instead; the gateway
         sends it the schema, in an added instruction, only if no message says "json".
         `tag` joins the call's cost to the caller's own row; it never changes the cache key.
+        `replicate` asks for a deliberate repeat: replicate 2 of a request is a fresh answer,
+        cached under its own key, and replicate 1 is the plain request.
         """
-        r = self._call(wire.chat_form(model, user=user, system=system, schema=schema), tag)
+        form = wire.chat_form(model, user=user, system=system, schema=schema, replicate=replicate)
+        r = self._call(form, tag)
         return ChatReply(
             r["text"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"], r["attempts"]
         )

@@ -37,6 +37,10 @@ The gateway keeps every answer. The same request sent again, by you or anyone in
 comes back from the cache at no cost. A call that could push the meter past its ceiling is
 refused before it is sent.
 
+To ask the same question again on purpose, such as to see how often a model changes its
+answer, pass `replicate=2`, then `3`, and so on. Each replicate gets a fresh answer, kept
+under its own number, so a rerun replays each one.
+
 When a call must stop your loop, it raises one of four errors, all under `Stopped`: the
 ceiling is reached, the provider's balance is used up, the provider is down, or the gateway
 cannot be reached. A request the provider calls malformed raises `Rejected`, and nothing
