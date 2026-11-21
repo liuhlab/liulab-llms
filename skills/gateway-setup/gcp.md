@@ -42,9 +42,13 @@ gcloud compute instances list --filter='name~^llm-gateway-' --format='value(name
      --daily-schedule --start-time=09:00 --max-retention-days=14 \
      --on-source-disk-delete=keep-auto-snapshots --storage-location=<region>
    gcloud compute disks add-resource-policies llm-gateway-data --zone=<zone> --resource-policies=llm-gateway-daily
-   gcloud storage buckets create gs://<bucket> --location=<region> --uniform-bucket-level-access --public-access-prevention
+   gcloud storage buckets create gs://<bucket> --location=<region> --uniform-bucket-level-access --public-access-prevention \
+     --enable-autoclass --autoclass-terminal-storage-class=ARCHIVE
    gcloud storage buckets update gs://<bucket> --lifecycle-file=backup-lifecycle.json
    ```
+
+   Autoclass moves a dump nobody reads to colder classes, down to Archive. The lifecycle
+   file deletes `nightly/` dumps at 30 days and `monthly/` ones at three years.
 
 6. **Launch:** `sky launch -c llm-gateway llm-gateway.yaml -y --env BACKUP_BUCKET=gs://<bucket>`.
    The setup runs as job 1; it ends `Job finished (status: SUCCEEDED)`, else read
@@ -99,6 +103,15 @@ The data disk reattaches by name.
 gcloud compute instances delete-access-config <instance> --zone=<zone> --access-config-name="External NAT"
 gcloud compute instances add-access-config <instance> --zone=<zone> --access-config-name="External NAT" \
   --address="$(gcloud compute addresses describe llm-gateway-ip --region=<region> --format='value(address)')"
+```
+
+## Grow the data disk
+
+Online, with both services running. A disk only grows:
+
+```bash
+gcloud compute disks resize llm-gateway-data --zone=<zone> --size=<GB>
+ssh llm-gateway 'sudo resize2fs /dev/disk/by-id/google-sky-disk-0 && df -h /mnt/data'
 ```
 
 ## Snapshot before an upgrade

@@ -2,7 +2,11 @@
   "rule": [
     {
       "action": { "type": "Delete" },
-      "condition": { "age": 30 }
+      "condition": { "age": 30, "matchesPrefix": ["nightly/", "labllm-"] }
+    },
+    {
+      "action": { "type": "Delete" },
+      "condition": { "age": 1095, "matchesPrefix": ["monthly/"] }
     }
   ]
 }

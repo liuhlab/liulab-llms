@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Dump the gateway's database to $BACKUP_BUCKET. Run as root by labllm-dump.service.
 # The dump is finished on local disk before the upload, so a failed dump uploads nothing.
-# The upload is GCP's `gcloud storage`; another cloud swaps that one line.
+# A month's first dump goes under monthly/, which the bucket keeps longer; the rest under
+# nightly/. The bucket calls are GCP's `gcloud storage`; another cloud swaps those two lines.
 set -euo pipefail
 : "${BACKUP_BUCKET:?set BACKUP_BUCKET in /etc/labllm/backup.env}"
-name="labllm-$(date -u +%Y%m%dT%H%M%SZ).dump"
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
 tmp=$(mktemp /var/tmp/labllm-dump.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 labllm-db pg_dump --format=custom labllm >"$tmp"
-gcloud storage cp --quiet "$tmp" "$BACKUP_BUCKET/$name"
-echo "dumped to $BACKUP_BUCKET/$name"
+folder=monthly
+# A failed listing reads as no monthly dump yet, which costs one extra monthly copy.
+if gcloud storage ls "$BACKUP_BUCKET/monthly/labllm-${stamp:0:6}*" &>/dev/null; then
+    folder=nightly
+fi
+gcloud storage cp --quiet "$tmp" "$BACKUP_BUCKET/$folder/labllm-$stamp.dump"
+echo "dumped to $BACKUP_BUCKET/$folder/labllm-$stamp.dump"
