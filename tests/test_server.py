@@ -672,6 +672,54 @@ def call_through(conninfo: str, api: ProviderApi, **settings: Any) -> ChatReply:
                 }
             },
         ),
+        (
+            "openai",
+            429,
+            {
+                "error": {
+                    "message": "Used up.",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "credit_balance_exhausted",
+                }
+            },
+        ),
+        (
+            "openai",
+            429,
+            {
+                "error": {
+                    "message": "Used up.",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "organization_spend_limit_exceeded",
+                }
+            },
+        ),
+        (
+            "openai",
+            429,
+            {
+                "error": {
+                    "message": "Used up.",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "project_spend_limit_exceeded",
+                }
+            },
+        ),
+        (
+            "openai",
+            429,
+            {
+                "error": {
+                    "message": "Used up.",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "organization_usage_limit_exceeded",
+                }
+            },
+        ),
         ("deepseek", 402, {"error": {"message": "Insufficient Balance", "type": "unknown_error"}}),
         (
             "anthropic",
@@ -686,7 +734,16 @@ def call_through(conninfo: str, api: ProviderApi, **settings: Any) -> ChatReply:
         ),
         ("anthropic", 402, {"type": "error", "error": {"type": "billing_error", "message": "no"}}),
     ],
-    ids=["openai-quota-429", "deepseek-balance-402", "anthropic-credit-400", "anthropic-402"],
+    ids=[
+        "openai-quota-429",
+        "openai-credit-balance-429",
+        "openai-org-spend-limit-429",
+        "openai-project-spend-limit-429",
+        "openai-org-usage-limit-429",
+        "deepseek-balance-402",
+        "anthropic-credit-400",
+        "anthropic-402",
+    ],
 )
 @pytest.mark.usefixtures("provider_keys")
 def test_a_used_up_balance_or_cap_is_exhausted_and_never_retried(

@@ -21,7 +21,13 @@ _REFUSALS = (
 #: How each provider's error body says a balance or cap is used up, besides a 402 status.
 #: OpenAI answers 429 for a used-up quota; Anthropic has answered 400 for a used-up credit.
 _USED_UP = {
-    "openai": ("insufficient_quota",),
+    "openai": (
+        "insufficient_quota",
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+        "organization_usage_limit_exceeded",
+    ),
     "anthropic": ("credit balance is too low", "reached your specified api usage limits"),
 }
 
