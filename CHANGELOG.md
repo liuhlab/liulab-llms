@@ -7,8 +7,14 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.3] - 2026-11-21
+
 ### Fixed
 
+- An OpenAI call refused because the account's credit or a spending limit is used up now
+  stops at once, as a refusal for `insufficient_quota` already did. The gateway used to take
+  these refusals for a busy provider and send the call again. The fix arrives with an
+  upgrade of the lab gateway and needs no new client.
 - A chat call with a `schema` to a DeepSeek model no longer fails when its prompt lacks the
   word "json". DeepSeek takes no schema, so the gateway asks it for JSON, and DeepSeek refuses
   that unless a message says "json". When none does, the gateway now adds one instruction
