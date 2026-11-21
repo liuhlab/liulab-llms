@@ -86,11 +86,19 @@ _Avoid_: log, transcript, cache table
 An ending: the kind's code refused the unit with a message. No answer is kept.
 _Avoid_: rejected, failed
 
+### Replicate
+
+A numbered, deliberate repeat of one chat request, for a fresh answer from the same model.
+Replicate 1 is the plain request. Each later one is its own cache entry, so a rerun replays
+every replicate as it was first answered.
+_Avoid_: trial, sample, draw, retry
+
 ### Request form
 
 What decides a call's answer, as `labllm.wire` builds it: provider, exact model name,
-settings, the messages or Jev's description and questions, and the output schema. Its hash
-is the cache key; labels, the tag and the ceiling are never in it.
+settings, the messages or Jev's description and questions, the output schema, and a
+replicate past the first. Its hash is the cache key; labels, the tag and the ceiling are
+never in it.
 _Avoid_: payload, prompt
 
 ### Review

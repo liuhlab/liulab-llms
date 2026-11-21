@@ -34,12 +34,31 @@ STATUS = {
 
 
 def chat_form(
-    model: Model, *, user: str, system: str | None, schema: dict[str, Any] | None
+    model: Model,
+    *,
+    user: str,
+    system: str | None,
+    schema: dict[str, Any] | None,
+    replicate: int = 1,
 ) -> dict[str, Any]:
-    """Build the request form of a chat call: what decides the answer, and nothing else."""
+    """Build the request form of a chat call: what decides the answer, and nothing else.
+
+    A replicate past the first enters the form, so it has its own cache key; the first is
+    the plain request.
+
+    Raises
+    ------
+    ValueError
+        `replicate` is not a whole number from 1.
+    """
+    if isinstance(replicate, bool) or not isinstance(replicate, int) or replicate < 1:
+        raise ValueError(f"replicate must be a whole number from 1, not {replicate!r}")
     messages = [] if system is None else [{"role": "system", "content": system}]
     messages.append({"role": "user", "content": user})
-    return {**_model_part("chat", model), "messages": messages, "schema": schema}
+    form = {**_model_part("chat", model), "messages": messages, "schema": schema}
+    if replicate > 1:
+        form["replicate"] = replicate
+    return form
 
 
 def jev_form(model: Model, *, description: str, questions: Mapping[str, Any]) -> dict[str, Any]:
