@@ -10,7 +10,7 @@ failed attempt is tried again. Five choices cost something if reversed.
 
 **A provider's `ProviderUnavailable` means "try again".** Each provider maps its own errors:
 `ProviderExhausted` for a used-up balance or cap, read from the body as well as the status
-(any 402; OpenAI's 429 `insufficient_quota`; Anthropic's 400 about credit), `Rejected` for
+(any 402; OpenAI's 429 used-up codes; Anthropic's 400 about credit), `Rejected` for
 a malformed or unauthorized request, and `ProviderUnavailable` with the status and
 `Retry-After` for everything else. The retry loop reads only that shape, so it knows no
 provider. The cost: a new provider's quota wording must be found and added by hand.
