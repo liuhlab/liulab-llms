@@ -409,6 +409,15 @@ def test_one_form_always_gives_one_request_and_keeps_its_cache_key() -> None:
     )
 
 
+def test_a_replicate_changes_the_cache_key_but_never_reaches_the_provider() -> None:
+    form = chat_form("deepseek")
+    second = wire.chat_form(
+        Model("deepseek", "a-model"), user="hello", system=None, schema=SCHEMA, replicate=2
+    )
+    assert wire.cache_key(second) != wire.cache_key(form)
+    assert request(second) == request(form)
+
+
 @pytest.mark.parametrize("provider", ["openai", "anthropic"])
 def test_a_provider_that_takes_a_schema_is_sent_the_forms_own_messages(provider: str) -> None:
     form = chat_form(provider)

@@ -20,6 +20,7 @@ from labllm import (
     ProviderUnavailable,
     Rejected,
     Stopped,
+    wire,
 )
 from labllm.peak import MARGIN_S
 
@@ -74,6 +75,26 @@ def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) ->
     paid, hit = harness.record()
     assert hit.key == paid.key
     assert (hit.cached, hit.cost_usd, hit.form, hit.reply) == (True, 0.0, None, None)
+
+
+def test_a_replicate_past_the_first_is_answered_fresh_and_replays_itself(
+    harness: Harness,
+) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    with harness.client().meter("replicates", ceiling_usd=1.0) as m:
+        plain = m.chat(CHAT, user="hello")
+        first = m.chat(CHAT, user="hello", replicate=1)
+        second = m.chat(CHAT, user="hello", replicate=2)
+        again = m.chat(CHAT, user="hello", replicate=2)
+    assert [r.cached for r in (plain, first, second, again)] == [False, True, False, True]
+    assert provider.calls == 2
+
+
+@pytest.mark.parametrize("replicate", [0, -1, 1.0, True])
+def test_a_replicate_is_a_whole_number_from_one(replicate: Any) -> None:
+    with pytest.raises(ValueError, match="replicate"):
+        wire.chat_form(CHAT, user="hello", system=None, schema=None, replicate=replicate)
 
 
 def test_labels_tags_ceilings_and_callers_do_not_change_the_cache_key(harness: Harness) -> None:

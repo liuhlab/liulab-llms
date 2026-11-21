@@ -7,6 +7,13 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `Meter.chat` takes `replicate`, to send the same request again on purpose and get a fresh
+  answer. Replicate 1 is the plain request. Each later replicate is kept under its own
+  number, so a rerun replays every one as it was first answered. The lab gateway needs no
+  upgrade.
+
 ## [2026.11.3] - 2026-11-21
 
 ### Fixed
