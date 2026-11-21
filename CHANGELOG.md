@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.4] - 2026-11-21
+
 ### Added
 
 - `Meter.chat` takes `replicate`, to send the same request again on purpose and get a fresh
