@@ -20,6 +20,7 @@ import openai
 import psycopg
 import pytest
 from litellm.llms.custom_httpx.http_handler import HTTPHandler
+from litellm.types.utils import ChatCompletionMessageToolCall, Function
 
 from gateway_harness import database, empty, read_record, running, stand_in
 from harness import CHAT, HOUR, MONDAY, PEAK, PRICES
@@ -49,11 +50,6 @@ from labllm.testing import FakeClock, Price
 
 DEEPSEEK = "deepseek-v4-flash"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
-#: What a provider asked for JSON mode is told when no message says "json", for `SCHEMA`.
-INSTRUCTION = (
-    "Answer in JSON that fits this schema:\n"
-    '{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}'
-)
 
 
 @pytest.fixture
@@ -105,6 +101,11 @@ class Completion:
             model=kwargs["model"], messages=kwargs["messages"], mock_response=text or "-"
         )
         response.choices[0].message.content = text
+        if kwargs.get("tools"):
+            response.choices[0].message.content = None
+            response.choices[0].message.tool_calls = [
+                ChatCompletionMessageToolCall(function=Function(name="answer", arguments=text))
+            ]
         return response
 
 
@@ -237,35 +238,6 @@ def test_the_reservation_counts_the_schema_and_system_prompt_as_input(conninfo: 
     assert calls == []
 
 
-class EmptyRecord(Record):
-    """A record with no exchange in it and no database under it, for a call refused unsent."""
-
-    def __init__(self) -> None:
-        pass
-
-    def entry(self, key: str) -> None:
-        return None
-
-    def spent(self, meter: str) -> float:
-        return 0.0
-
-
-def test_the_reservation_counts_the_instruction_a_json_mode_call_is_sent() -> None:
-    completion = Completion()
-    prices = Prices({"by-input": Price(input_usd_per_token=0.001, output_usd_per_token=0.0)})
-    chat = LiteLLMChat(prices, completion=completion)
-    server = Server(EmptyRecord(), prices, {"chat": chat}, clock=FakeClock())
-    form = wire.chat_form(Model("deepseek", "by-input"), user="hello", system=None, schema=SCHEMA)
-    sent = [{"role": "system", "content": INSTRUCTION}, {"role": "user", "content": "hello"}]
-    input_usd = len(json.dumps(sent, separators=(",", ":")).encode()) * 0.001
-    # The ceiling is one byte short of the messages DeepSeek would be sent.
-    meter = {"meter": "m1", "label": "input", "ceiling_usd": input_usd - 0.001}
-    call = wire.Call(form=form, off_peak_only=False, person="ann", repo="tests", tag=None, **meter)
-    with pytest.raises(CeilingReached):
-        wire.decode_response(*server.answer("/chat", call.encode()))
-    assert completion.sent == []
-
-
 def test_a_model_the_settings_do_not_price_is_priced_from_the_pinned_table(conninfo: str) -> None:
     calls: list[str] = []
     provider = stand_in(lambda form: calls.append("sent") or "abc", {"gpt-5.5": Price(0, 0)})
@@ -327,17 +299,45 @@ def test_rate_limits_and_the_retry_budget_are_settings(tmp_path: Path) -> None:
     assert (load(None).limits, load(None).retry_budget_s) == ({}, BUDGET_S)
 
 
-def test_deepseek_gets_thinking_off_its_effort_and_json_mode(conninfo: str) -> None:
+def test_deepseek_gets_thinking_off_its_effort_and_a_strict_function_call() -> None:
     completion = Completion()
     model = Model("deepseek", "deepseek-v4-flash", thinking=False, effort="max", temperature=0)
-    r = send(conninfo, LiteLLMChat(Prices(), completion=completion), model, schema=SCHEMA)
+    form = wire.chat_form(model, user="answer in json", system=None, schema=SCHEMA)
+    r = LiteLLMChat(Prices(), completion=completion)(form)
     (sent,) = completion.sent
-    assert r.text == '{"n": 1}'
+    assert r.output == '{"n": 1}'
     assert sent["model"] == "deepseek/deepseek-v4-flash"
     assert sent["thinking"] == {"type": "disabled"}
     assert sent["extra_body"] == {"reasoning_effort": "max"}
-    assert sent["response_format"] == {"type": "json_object"}
+    assert sent["tool_choice"] == {"type": "function", "function": {"name": "answer"}}
+    assert "response_format" not in sent
     assert (sent["temperature"], sent["max_tokens"]) == (0.0, 4096)
+
+
+def test_deepseek_schema_refuses_thinking_before_a_provider_call() -> None:
+    model = Model("deepseek", "a-model", thinking=True)
+    form = wire.chat_form(model, user="hello", system=None, schema=SCHEMA)
+    with pytest.raises(Rejected, match="thinking off"):
+        request(form)
+
+
+def test_deepseek_gets_a_strict_function_call_and_image_input() -> None:
+    content = [
+        {"type": "text", "text": "Read this quotation."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
+    form = chat_form("deepseek", user=content)
+    sent = request(form)
+    assert sent["messages"] == form["messages"]
+    assert sent["thinking"] == {"type": "disabled"}
+    assert sent["_skip_mcp_handler"] is True
+    assert sent["tools"] == [
+        {
+            "type": "function",
+            "function": {"name": "answer", "parameters": SCHEMA, "strict": True},
+        }
+    ]
+    assert sent["tool_choice"] == {"type": "function", "function": {"name": "answer"}}
 
 
 def test_openai_gets_one_attempt_and_native_schema_output(conninfo: str) -> None:
@@ -356,7 +356,7 @@ def test_openai_gets_one_attempt_and_native_schema_output(conninfo: str) -> None
 def chat_form(
     provider: str,
     *,
-    user: str = "hello",
+    user: str | list[dict[str, Any]] = "hello",
     system: str | None = None,
     schema: dict[str, Any] | None = SCHEMA,
 ) -> dict[str, Any]:
@@ -364,38 +364,11 @@ def chat_form(
     return wire.chat_form(Model(provider, "a-model"), user=user, system=system, schema=schema)
 
 
-def test_json_mode_with_no_json_in_a_message_gets_an_instruction_carrying_the_schema() -> None:
-    sent = request(chat_form("deepseek"))
-    assert sent["response_format"] == {"type": "json_object"}
-    assert sent["messages"] == [
-        {"role": "system", "content": INSTRUCTION},
-        {"role": "user", "content": "hello"},
-    ]
-
-
-def test_the_instruction_follows_the_forms_own_system_text_in_one_system_message() -> None:
-    sent = request(chat_form("deepseek", system="Be brief."))
-    assert sent["messages"] == [
-        {"role": "system", "content": "Be brief.\n\n" + INSTRUCTION},
-        {"role": "user", "content": "hello"},
-    ]
-
-
-@pytest.mark.parametrize(
-    ("user", "system", "schema"),
-    [
-        ("Answer in JSON.", None, SCHEMA),
-        ("hello", "Reply as Json, briefly.", SCHEMA),
-        ("hello", "Be brief.", None),
-    ],
-)
-def test_a_form_that_says_json_or_has_no_schema_is_sent_its_own_messages(
-    user: str, system: str | None, schema: dict[str, Any] | None
-) -> None:
-    form = chat_form("deepseek", user=user, system=system, schema=schema)
+def test_deepseek_without_a_schema_keeps_its_messages_and_sends_no_response_format() -> None:
+    form = chat_form("deepseek", system="Be brief.", schema=None)
     sent = request(form)
     assert sent["messages"] == form["messages"]
-    assert sent.get("response_format") == (None if schema is None else {"type": "json_object"})
+    assert "response_format" not in sent
 
 
 def test_one_form_always_gives_one_request_and_keeps_its_cache_key() -> None:
