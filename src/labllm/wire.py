@@ -36,7 +36,7 @@ STATUS = {
 def chat_form(
     model: Model,
     *,
-    user: str,
+    user: str | list[dict[str, Any]],
     system: str | None,
     schema: dict[str, Any] | None,
     replicate: int = 1,
@@ -53,7 +53,9 @@ def chat_form(
     """
     if isinstance(replicate, bool) or not isinstance(replicate, int) or replicate < 1:
         raise ValueError(f"replicate must be a whole number from 1, not {replicate!r}")
-    messages = [] if system is None else [{"role": "system", "content": system}]
+    messages: list[dict[str, Any]] = (
+        [] if system is None else [{"role": "system", "content": system}]
+    )
     messages.append({"role": "user", "content": user})
     form = {**_model_part("chat", model), "messages": messages, "schema": schema}
     if replicate > 1:

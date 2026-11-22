@@ -31,9 +31,6 @@ _USED_UP = {
     "anthropic": ("credit balance is too low", "reached your specified api usage limits"),
 }
 
-#: What a provider asked for JSON mode is told, followed by the form's schema as JSON.
-_JSON_INSTRUCTION = "Answer in JSON that fits this schema:\n"
-
 
 class LiteLLMChat:
     """Sends a chat form through `litellm.completion`, once, with no retry of its own.
@@ -90,8 +87,17 @@ class LiteLLMChat:
         if not isinstance(body, dict) or not isinstance(usage, dict):
             body = response.model_dump(mode="json")
             usage = response.usage.model_dump(mode="json", exclude_none=True)
+        message = response.choices[0].message
+        output = message.content or ""
+        if form["provider"] == "deepseek" and form.get("schema") is not None:
+            calls = message.tool_calls or []
+            output = (
+                calls[0].function.arguments or ""
+                if len(calls) == 1 and calls[0].function.name == "answer"
+                else ""
+            )
         return Attempt(
-            output=response.choices[0].message.content or "",
+            output=output,
             usage=usage,
             cost_usd=self._prices.cost(form, response),
             response=body,
@@ -126,9 +132,8 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     """Return the arguments to `litellm.completion` for a chat form.
 
     DeepSeek takes `thinking` on or off and its effort level, which LiteLLM would drop, in the
-    request body; it takes JSON mode, not a schema. JSON mode is refused unless a message says
-    "json", so a form that never says it is sent an instruction carrying its schema. Other
-    providers get the schema as native schema output and the effort as `reasoning_effort`, and
+    request body. A DeepSeek schema becomes one strict function call, which requires thinking
+    off. Other providers get native schema output and the effort as `reasoning_effort`, and
     refuse `thinking`. OpenAI's own client retries unless told not to.
 
     Raises
@@ -147,18 +152,27 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     if settings["temperature"] is not None:
         kwargs["temperature"] = settings["temperature"]
     if provider == "deepseek":
-        if settings["thinking"] is not None:
+        if schema is not None:
+            if settings["thinking"] is True:
+                raise Rejected("DeepSeek strict function calls need thinking off")
+            kwargs["thinking"] = {"type": "disabled"}
+            kwargs["_skip_mcp_handler"] = True
+            kwargs["tools"] = [
+                {
+                    "type": "function",
+                    "function": {"name": "answer", "parameters": schema, "strict": True},
+                }
+            ]
+            kwargs["tool_choice"] = {"type": "function", "function": {"name": "answer"}}
+        elif settings["thinking"] is not None:
             kwargs["thinking"] = {"type": "enabled" if settings["thinking"] else "disabled"}
         if settings["effort"] is not None:
             kwargs["extra_body"] = {"reasoning_effort": settings["effort"]}
-        if schema is not None:
-            kwargs["response_format"] = {"type": "json_object"}
-        return kwargs
-    if settings["thinking"] is not None:
+    if provider != "deepseek" and settings["thinking"] is not None:
         raise Rejected(f"thinking is a DeepSeek setting; for {provider}, set effort instead")
-    if settings["effort"] is not None:
+    if provider != "deepseek" and settings["effort"] is not None:
         kwargs["reasoning_effort"] = settings["effort"]
-    if schema is not None:
+    if provider != "deepseek" and schema is not None:
         kwargs["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "answer", "schema": schema, "strict": True},
@@ -169,20 +183,5 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
 
 
 def _messages(form: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the messages a chat form's provider is sent, leaving the form as it is.
-
-    A form that gets JSON mode and says "json" in no message has `_JSON_INSTRUCTION` and its
-    schema added: after its own system text, or as a new first message.
-    """
-    messages, schema = form["messages"], form.get("schema")
-    if (
-        form["provider"] != "deepseek"
-        or schema is None
-        or any("json" in m["content"].lower() for m in messages)
-    ):
-        return messages
-    told = _JSON_INSTRUCTION + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-    if messages and messages[0]["role"] == "system":
-        system, *rest = messages
-        return [{**system, "content": f"{system['content']}\n\n{told}"}, *rest]
-    return [{"role": "system", "content": told}, *messages]
+    """Return the messages a chat form's provider is sent, leaving the form as it is."""
+    return form["messages"]

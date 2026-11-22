@@ -59,6 +59,23 @@ def test_a_chat_call_returns_the_providers_text_and_its_cost(harness: Harness) -
     )
 
 
+def test_a_chat_call_accepts_text_and_image_content(harness: Harness) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def provider(form: dict[str, Any]) -> str:
+        seen.append(form["messages"][0])
+        return "abc"
+
+    harness.provider(provider)
+    content = [
+        {"type": "text", "text": "Read this quotation."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+    ]
+    with harness.client().meter("image", ceiling_usd=1.0) as m:
+        m.chat(CHAT, user=content)
+    assert seen == [{"role": "user", "content": content}]
+
+
 def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) -> None:
     provider = Counting()
     harness.provider(provider)

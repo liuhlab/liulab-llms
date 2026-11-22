@@ -7,6 +7,12 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `Meter.chat` takes OpenAI text and image content blocks. For a DeepSeek call with a schema,
+  an upgraded lab gateway uses a strict function call with thinking off instead of JSON mode.
+  The request form and cache key stay unchanged.
+
 ## [2026.11.4] - 2026-11-21
 
 ### Added
