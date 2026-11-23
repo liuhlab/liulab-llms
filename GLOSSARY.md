@@ -7,8 +7,9 @@ The words for model calls through the lab gateway, and for the work run over man
 ### Ceiling
 
 A meter's limit in dollars, required and with no default. The gateway refuses a call whose
-largest possible cost (estimated input plus the full output allowance), added to what the
-meter has spent and holds for calls in flight, would cross it. A cache hit never counts.
+largest possible cost, added to what the meter has spent and holds for calls in flight, would
+cross it. That cost counts one input token per byte of text, the most its provider bills for
+each image, and the full output allowance. A cache hit never counts.
 _Avoid_: budget, cap, limit
 
 ### Dropped

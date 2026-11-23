@@ -31,13 +31,17 @@ DEEPSEEK_OFF_PEAK = {
 
 #: The suite's models. Input is free, so a reservation is the output allowance alone and the
 #: suite holds for any gateway whatever it estimates for input. `PEAK` has DeepSeek's hours.
+#: `VISION` alone pays for input, so a gateway must count an image by the shared rule in
+#: `labllm.ceiling`.
 CHAT = Model("openai", "test-chat", max_output_tokens=10)
 JEV = Model("typesafe", "test-jev", max_output_tokens=10)
 PEAK = Model("deepseek", "test-peak", max_output_tokens=10)
+VISION = Model("deepseek", "test-vision", max_output_tokens=10)
 PRICES: Mapping[str, Price] = {
     CHAT.name: Price(input_usd_per_token=0.0, output_usd_per_token=0.01),
     JEV.name: Price(input_usd_per_token=0.0, output_usd_per_token=0.01),
     PEAK.name: Price(0.0, 0.01, off_peak=OffPeak.read(DEEPSEEK_OFF_PEAK)),
+    VISION.name: Price(input_usd_per_token=3e-7, output_usd_per_token=1.2e-6),
 }
 
 

@@ -1,5 +1,6 @@
 """The shared call-layer suite: every test here runs against every gateway in `HARNESSES`."""
 
+import base64
 import dataclasses
 import http.client
 import itertools
@@ -10,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from harness import CHAT, HOUR, JEV, MONDAY, PEAK, Harness
+from harness import CHAT, HOUR, JEV, MONDAY, PEAK, VISION, Harness
 from labllm import (
     CeilingReached,
     Gateway,
@@ -74,6 +75,30 @@ def test_a_chat_call_accepts_text_and_image_content(harness: Harness) -> None:
     with harness.client().meter("image", ceiling_usd=1.0) as m:
         m.chat(CHAT, user=content)
     assert seen == [{"role": "user", "content": content}]
+
+
+def test_a_large_image_counts_as_its_providers_most_tokens_for_one_image(
+    harness: Harness,
+) -> None:
+    harness.provider(lambda form: "abc")
+    picture = base64.b64encode(bytes(2_000_000)).decode()
+    content = [
+        {"type": "text", "text": "Read this screenshot."},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{picture}"}},
+    ]
+    with harness.client().meter("screenshot", ceiling_usd=0.05) as m:
+        assert m.chat(VISION, user=content).text == "abc"
+
+
+def test_an_image_for_a_provider_with_no_image_bound_is_rejected_unsent(
+    harness: Harness,
+) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    content = [{"type": "image_url", "image_url": {"url": "https://example.org/a.png"}}]
+    with harness.client().meter("unbounded", ceiling_usd=1.0) as m, pytest.raises(Rejected):
+        m.chat(Model("unbounded", CHAT.name), user=content)
+    assert provider.calls == 0
 
 
 def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) -> None:

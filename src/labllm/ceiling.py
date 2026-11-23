@@ -6,32 +6,83 @@ from collections.abc import Callable
 from typing import Any
 
 from labllm import wire
-from labllm.errors import CeilingReached
+from labllm.errors import CeilingReached, Rejected
 from labllm.model import Price
+
+#: The most input tokens each provider bills for one image, whatever its size or detail level,
+#: from its own documentation; `docs/adr/0015-an-image-counts-as-its-providers-bound.md` cites it.
+IMAGE_TOKENS = {"anthropic": 4784, "deepseek": 1024, "openai": 73800}
 
 
 def input_bytes(form: dict[str, Any]) -> int:
-    """Return the UTF-8 bytes of everything a form sends as input, as JSON.
+    """Return the UTF-8 bytes of everything a form sends as input, as JSON, but its images.
 
-    For chat, the messages with their roles, and the schema; for Jev, its description and
-    questions.
+    For chat, the messages with their roles, each image part cut to its type, and the schema;
+    for Jev, its description and questions.
     """
     if form["route"] == "chat":
-        sent = [form["messages"], form.get("schema")]
+        sent = [[_without_images(m) for m in form["messages"]], form.get("schema")]
     else:
         sent = [form["description"], form["questions"]]
     return len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode())
 
 
+def image_tokens(form: dict[str, Any]) -> int:
+    """Return the most input tokens a form's images can be billed: its provider's bound each.
+
+    Raises
+    ------
+    Rejected
+        The form has an image, and `IMAGE_TOKENS` has no bound for its provider.
+    """
+    images = sum(_is_image(part) for part in _parts(form))
+    if not images:
+        return 0
+    bound = IMAGE_TOKENS.get(form["provider"])
+    if bound is None:
+        raise Rejected(f"the gateway has no bound on what {form['provider']} bills for an image")
+    return images * bound
+
+
 def largest_cost(price: Price, form: dict[str, Any]) -> float:
     """Return the most a call can cost: its input plus its full output allowance.
 
-    Input is counted as `input_bytes`, which no byte-level tokenizer exceeds.
+    Input is counted as `input_bytes`, which no byte-level tokenizer exceeds, plus
+    `image_tokens`.
+
+    Raises
+    ------
+    Rejected
+        As `image_tokens` does.
     """
+    input_tokens = input_bytes(form) + image_tokens(form)
     return (
-        input_bytes(form) * price.input_usd_per_token
+        input_tokens * price.input_usd_per_token
         + form["settings"]["max_output_tokens"] * price.output_usd_per_token
     )
+
+
+def _parts(form: dict[str, Any]) -> list[Any]:
+    """Return the content parts of a chat form's messages; text content has none."""
+    if form["route"] != "chat":
+        return []
+    return [part for m in form["messages"] for part in _content_parts(m)]
+
+
+def _content_parts(message: Any) -> list[Any]:
+    content = message.get("content") if isinstance(message, dict) else None
+    return content if isinstance(content, list) else []
+
+
+def _is_image(part: Any) -> bool:
+    return isinstance(part, dict) and part.get("type") == "image_url"
+
+
+def _without_images(message: Any) -> Any:
+    parts = _content_parts(message)
+    if not parts:
+        return message
+    return {**message, "content": [{"type": "image_url"} if _is_image(p) else p for p in parts]}
 
 
 class Ceilings:
