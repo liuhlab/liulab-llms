@@ -26,7 +26,8 @@ each per-second limit. A waiting call holds no ceiling and no lock another provi
 Overload pauses every call to that provider; an empty reply retries only its own call.
 
 **The rate estimate is four bytes a token, corrected by the provider's input count.** The
-ceiling keeps its byte count, an upper bound. A wrong estimate costs a short burst or a
+ceiling keeps its byte count, an upper bound. Both count an image as its provider's bound
+([0015](0015-an-image-counts-as-its-providers-bound.md)). A wrong estimate costs a short burst or a
 short idle, never money.
 
 **An empty reply is a paid, failed attempt.** The provider returns it; the gateway records

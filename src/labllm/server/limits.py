@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from labllm.ceiling import input_bytes
+from labllm.ceiling import image_tokens, input_bytes
 from labllm.clock import Clock
 
 
@@ -25,9 +25,15 @@ class RateLimit:
 def estimate_input_tokens(form: dict[str, Any]) -> int:
     """Estimate a form's input tokens at four bytes of UTF-8 each, as English text runs.
 
-    The provider's usage corrects it after the call. The ceiling keeps its own upper bound.
+    Each image counts as its provider's bound. The provider's usage corrects the estimate
+    after the call. The ceiling keeps its own upper bound.
+
+    Raises
+    ------
+    Rejected
+        As `labllm.ceiling.image_tokens` does.
     """
-    return math.ceil(input_bytes(form) / 4)
+    return math.ceil(input_bytes(form) / 4) + image_tokens(form)
 
 
 class _Bucket:

@@ -37,8 +37,9 @@ crash mid-call keeps the ceiling.
 
 ## Consequences
 
-- The ceiling's input estimate is the UTF-8 bytes of everything sent as input, as JSON,
-  the schema included: a bound on a byte-level tokenizer, too high for a rate limit.
+- The ceiling counts input as the UTF-8 bytes of its JSON, schema included: a bound on a
+  byte-level tokenizer, too high for a rate limit. Images follow
+  [0015](0015-an-image-counts-as-its-providers-bound.md).
 - The record keeps the provider's own body and usage, from the per-call `logger_fn` hook,
   which sees the body before LiteLLM rewrites Claude's usage. LiteLLM's stand in only when
   that body is not JSON with a usage object.

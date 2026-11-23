@@ -7,6 +7,14 @@ sets one.
 
 ## [Unreleased]
 
+### Fixed
+
+- A chat call with an image no longer counts the image's encoded bytes against its meter's
+  ceiling, so a large screenshot fits a small ceiling. Each image counts as the most its
+  provider charges for one image. A call with an image for a provider the gateway has no
+  rule for is refused before it is sent. The fix arrives with an upgrade of the lab gateway
+  and needs no new client; the fake gateway in `labllm.testing` follows it in this version.
+
 ### Added
 
 - `Meter.chat` takes OpenAI text and image content blocks. For a DeepSeek call with a schema,
