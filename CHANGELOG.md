@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.6] - 2026-11-22
+
 ### Fixed
 
 - A chat call with an image no longer counts the image's encoded bytes against its meter's
@@ -14,6 +16,8 @@ sets one.
   provider charges for one image. A call with an image for a provider the gateway has no
   rule for is refused before it is sent. The fix arrives with an upgrade of the lab gateway
   and needs no new client; the fake gateway in `labllm.testing` follows it in this version.
+
+## [2026.11.5] - 2026-11-22
 
 ### Added
 
