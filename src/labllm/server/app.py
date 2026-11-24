@@ -76,7 +76,8 @@ def retry_after_s(headers: Mapping[str, str] | None) -> float | None:
 
 #: Sends one request form to a provider, once. It raises `ProviderUnavailable` for a failure
 #: worth another attempt, with the provider's overload shape; another `Stopped` subclass or
-#: `Rejected` for one the caller must see at once. The seam where tests play the provider.
+#: `Rejected` for one the caller must see at once; the error's `cost_usd` is what the attempt
+#: paid before it failed. The seam where tests play the provider.
 #: A provider that sends more input than its form holds has an `as_sent(form)` method, which
 #: returns the form as it is sent; the call's reservation counts that one.
 Provider = Callable[[dict[str, Any]], Attempt]
@@ -227,9 +228,17 @@ class Server:
                     input_tokens = attempt.input_tokens
                 except Exception as e:
                     failure = unreadable(e, form["provider"])
-                    self._ceilings.settle(call.meter, reserve, 0.0)
+                    # Nonzero when the attempt paid before failing, as for a file's parsing.
+                    paid += failure.cost_usd
+                    self._ceilings.settle(call.meter, reserve, failure.cost_usd)
                     self._record.finish(
-                        row_id, self._ended(done, error=failure.reason, message=str(failure))
+                        row_id,
+                        self._ended(
+                            done,
+                            error=failure.reason,
+                            message=str(failure),
+                            cost_usd=failure.cost_usd,
+                        ),
                     )
                     if not isinstance(failure, ProviderUnavailable):
                         raise

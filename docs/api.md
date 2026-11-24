@@ -27,6 +27,8 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.client.Transport
 
+::: labllm.files
+
 ## Passes over many units
 
 ::: labllm.engine.UnitKind

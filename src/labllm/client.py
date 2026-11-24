@@ -321,9 +321,10 @@ class Meter:
     ) -> ChatReply:
         """Send one chat request and wait for its reply.
 
-        `user` is text or OpenAI content blocks, including an inline image. `schema` is a
-        plain JSON Schema dictionary, sent and hashed exactly as written. DeepSeek receives
-        it as a strict function call; other providers receive native schema output.
+        `user` is text or OpenAI content blocks, including an inline image, or a file for
+        DeepSeek from `labllm.files.file_part`. `schema` is a plain JSON Schema dictionary,
+        sent and hashed exactly as written. DeepSeek receives it as a strict function call;
+        other providers receive native schema output.
         `tag` joins the call's cost to the caller's own row; it never changes the cache key.
         `replicate` asks for a deliberate repeat: replicate 2 of a request is a fresh answer,
         cached under its own key, and replicate 1 is the plain request.

@@ -147,7 +147,9 @@ class FakeGateway:
 
     The provider's tokens are counted as characters: input is the messages' text, or Jev's
     description and its questions as JSON; output is the reply text and each tool call's name
-    and arguments, or Jev's answers as JSON.
+    and arguments, or Jev's answers as JSON. A file from `labllm.files.file_part` reaches
+    `provider` as its block, after the real gateway's checks and reservation; the fake charges
+    nothing for parsing it.
 
     Examples
     --------

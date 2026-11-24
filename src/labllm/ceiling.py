@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from labllm import wire
+from labllm import files, wire
 from labllm.errors import CeilingReached, Rejected
 from labllm.model import Price
 
@@ -15,13 +15,13 @@ IMAGE_TOKENS = {"anthropic": 4784, "deepseek": 1024, "openai": 73800}
 
 
 def input_bytes(form: dict[str, Any]) -> int:
-    """Return the UTF-8 bytes of everything a form sends as input, as JSON, but its images.
+    """Return the UTF-8 bytes of a form's input as JSON, leaving out its images and files.
 
-    For chat, the messages with their roles, each image part cut to its type, the schema and
-    any tools; for Jev, its description and questions.
+    For chat, the messages with their roles, each image or file part cut to its type, the
+    schema and any tools; for Jev, its description and questions.
     """
     if form["route"] == "chat":
-        sent = [[_without_images(m) for m in form["messages"]], form.get("schema")]
+        sent = [[_without_media(m) for m in form["messages"]], form.get("schema")]
         if form.get("tools"):
             sent.append(form["tools"])
     else:
@@ -50,17 +50,22 @@ def largest_cost(price: Price, form: dict[str, Any]) -> float:
     """Return the most a call can cost: its input plus its full output allowance.
 
     Input is counted as `input_bytes`, which no byte-level tokenizer exceeds, plus
-    `image_tokens`.
+    `image_tokens`. A form with a file counts its input as its provider's context length, since
+    a file's text has no bound short of it, plus the most each file's parsing can cost.
 
     Raises
     ------
     Rejected
-        As `image_tokens` does.
+        As `image_tokens` or `labllm.files.attached` does.
     """
+    attached = files.attached(form)
     input_tokens = input_bytes(form) + image_tokens(form)
+    if attached:
+        input_tokens = files.CONTEXT_TOKENS[form["provider"]]
     return (
         input_tokens * price.input_usd_per_token
         + form["settings"]["max_output_tokens"] * price.output_usd_per_token
+        + sum(f.most_usd for f in attached)
     )
 
 
@@ -80,11 +85,17 @@ def _is_image(part: Any) -> bool:
     return isinstance(part, dict) and part.get("type") == "image_url"
 
 
-def _without_images(message: Any) -> Any:
+def _without_media(message: Any) -> Any:
     parts = _content_parts(message)
     if not parts:
         return message
-    return {**message, "content": [{"type": "image_url"} if _is_image(p) else p for p in parts]}
+    return {**message, "content": [_cut(p) for p in parts]}
+
+
+def _cut(part: Any) -> Any:
+    if _is_image(part):
+        return {"type": "image_url"}
+    return {"type": "file"} if files.is_file(part) else part
 
 
 class Ceilings:
