@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.8] - 2026-11-24
+
 ### Changed
 
 - A PDF now counts against a meter at its own pages, not at 1,000 pages. Before, each PDF a
