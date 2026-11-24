@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.7] - 2026-11-24
+
 ### Added
 
 - A DeepSeek chat call can carry PDF, Word, PowerPoint and Excel files. Build each one's
