@@ -38,7 +38,8 @@ class Attempt:
     `output` is the reply text for chat, or Jev's answers; `usage` is the provider's usage as
     received; `response` is the provider's whole response, kept in the record. `input_tokens`
     is the input the provider counted, if known; it corrects the rate limit's estimate.
-    An empty `output` is a failed attempt, paid for and tried again.
+    `tool_calls` are the tools the model asked for, as `labllm.wire` carries them. An empty
+    `output` with no tool calls is a failed attempt, paid for and tried again.
     """
 
     output: Any
@@ -46,6 +47,7 @@ class Attempt:
     cost_usd: float
     response: Any = None
     input_tokens: int | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 def retry_after_s(headers: Mapping[str, str] | None) -> float | None:
@@ -176,6 +178,7 @@ class Server:
             first_cost_usd=entry.cost_usd,
             cached=True,
             attempts=0,
+            tool_calls=entry.reply.get("tool_calls"),
         )
 
     def _attempts(
@@ -240,8 +243,8 @@ class Server:
                     again = retries.again(failure)
                 else:
                     self._ceilings.settle(call.meter, reserve, attempt.cost_usd)
-                    reply = {wire.output_field(form["route"]): attempt.output}
-                    if attempt.output:
+                    reply = wire.answer(form["route"], attempt.output, attempt.tool_calls)
+                    if attempt.output or attempt.tool_calls:
                         self._record.finish(
                             row_id,
                             self._ended(
@@ -260,6 +263,7 @@ class Server:
                             first_cost_usd=attempt.cost_usd,
                             cached=False,
                             attempts=retries.attempts,
+                            tool_calls=attempt.tool_calls,
                         )
                     paid += attempt.cost_usd
                     empty = ProviderUnavailable(

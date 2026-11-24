@@ -4,7 +4,9 @@ The client, the fake gateway and the real gateway all build these from this modu
 agree on every key. A call is a JSON `Call` posted to the path for its form's route. A reply
 comes back as status 200 and a JSON object; an error as another status and
 ``{"error": <reason>, "message": <text>, "cost_usd": <paid>, "attempts": <sent>}``, where the
-reason names an error class.
+reason names an error class. A chat reply in which the model asks for tools adds
+``"tool_calls"``, each ``{"id", "name", "arguments"}`` with the arguments as the model's JSON
+text.
 """
 
 import hashlib
@@ -40,11 +42,13 @@ def chat_form(
     system: str | None,
     schema: dict[str, Any] | None,
     replicate: int = 1,
+    tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the request form of a chat call: what decides the answer, and nothing else.
 
     A replicate past the first enters the form, so it has its own cache key; the first is
-    the plain request.
+    the plain request. So do `tools`, each ``{"name", "description", "parameters"}``, when
+    there are any.
 
     Raises
     ------
@@ -58,6 +62,8 @@ def chat_form(
     )
     messages.append({"role": "user", "content": user})
     form = {**_model_part("chat", model), "messages": messages, "schema": schema}
+    if tools:
+        form["tools"] = tools
     if replicate > 1:
         form["replicate"] = replicate
     return form
@@ -145,6 +151,16 @@ def output_field(route: str) -> str:
     return "text" if route == "chat" else "answers"
 
 
+def answer(
+    route: str, output: Any, tool_calls: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Return what a reply answers, as the record keeps it: the output, and any tool calls."""
+    body = {output_field(route): output}
+    if tool_calls:
+        body["tool_calls"] = tool_calls
+    return body
+
+
 def reply(
     route: str,
     output: Any,
@@ -154,10 +170,11 @@ def reply(
     first_cost_usd: float,
     cached: bool,
     attempts: int,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a reply as a gateway sends it."""
     return {
-        output_field(route): output,
+        **answer(route, output, tool_calls),
         "usage": usage,
         "cost_usd": cost_usd,
         "first_cost_usd": first_cost_usd,

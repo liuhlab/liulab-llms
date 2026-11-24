@@ -84,11 +84,21 @@ def send(
 
 
 class Completion:
-    """Plays `litellm.completion`: keeps what it was sent and answers with LiteLLM's own mock."""
+    """Plays `litellm.completion`: keeps what it was sent and answers with LiteLLM's own mock.
 
-    def __init__(self, text: str | list[str] = '{"n": 1}', error: Exception | None = None) -> None:
+    Sent tools, it answers by calling the function `calls` names in turn, with its text as the
+    arguments.
+    """
+
+    def __init__(
+        self,
+        text: str | list[str] = '{"n": 1}',
+        error: Exception | None = None,
+        calls: list[str] | None = None,
+    ) -> None:
         self.texts = [text] if isinstance(text, str) else text
         self.error = error
+        self.calls = calls or ["answer"]
         self.sent: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> Any:
@@ -102,9 +112,12 @@ class Completion:
         )
         response.choices[0].message.content = text
         if kwargs.get("tools"):
+            name = self.calls[min(len(self.sent), len(self.calls)) - 1]
             response.choices[0].message.content = None
             response.choices[0].message.tool_calls = [
-                ChatCompletionMessageToolCall(function=Function(name="answer", arguments=text))
+                ChatCompletionMessageToolCall(
+                    function=Function(name=name, arguments=text), id=f"call_{len(self.sent)}"
+                )
             ]
         return response
 
@@ -338,6 +351,37 @@ def test_deepseek_gets_a_strict_function_call_and_image_input() -> None:
         }
     ]
     assert sent["tool_choice"] == {"type": "function", "function": {"name": "answer"}}
+
+
+def test_deepseek_gets_an_agents_tools_strict_and_returns_the_tools_it_asks_for() -> None:
+    lookup = {"name": "lookup", "description": "Find a company.", "parameters": SCHEMA}
+    model = Model("deepseek", DEEPSEEK)
+    form = wire.chat_form(model, user="Who is Acme?", system=None, schema=SCHEMA, tools=[lookup])
+    completion = Completion(['{"n": 7}', '{"n": 1}'], calls=["lookup", "answer"])
+    chat = LiteLLMChat(Prices(), completion=completion)
+    asked = chat(form)
+    call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "lookup", "arguments": '{"n": 7}'},
+    }
+    turn = [
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "Acme Ltd"},
+    ]
+    answered = chat({**form, "messages": form["messages"] + turn})
+    first, second = completion.sent
+    assert first["tools"] == [
+        {"type": "function", "function": {**lookup, "strict": True}},
+        {"type": "function", "function": {"name": "answer", "parameters": SCHEMA, "strict": True}},
+    ]
+    assert (first["tool_choice"], first["thinking"]) == ("required", {"type": "disabled"})
+    assert (asked.output, asked.tool_calls) == (
+        "",
+        [{"id": "call_1", "name": "lookup", "arguments": '{"n": 7}'}],
+    )
+    assert second["messages"][1:] == turn
+    assert (answered.output, answered.tool_calls) == ('{"n": 1}', None)
 
 
 def test_openai_gets_one_attempt_and_native_schema_output(conninfo: str) -> None:

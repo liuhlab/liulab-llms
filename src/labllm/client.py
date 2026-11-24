@@ -1,13 +1,14 @@
-"""The client: `Gateway`, its meters, and the replies a call returns."""
+"""The client: `Gateway`, its meters, the replies a call returns, and agents' tools."""
 
 import getpass
 import http.client
+import json
 import logging
 import math
 import os
 import threading
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Protocol
@@ -15,7 +16,14 @@ from urllib.parse import urlsplit
 
 from labllm import wire
 from labllm.clock import Clock, SystemClock
-from labllm.errors import GatewayUnreachable, PeakHours, Rejected, Stopped
+from labllm.errors import (
+    GatewayUnreachable,
+    PeakHours,
+    Rejected,
+    StepLimitReached,
+    Stopped,
+    UnknownTool,
+)
 from labllm.model import Model
 
 log = logging.getLogger(__name__)
@@ -37,6 +45,36 @@ class ChatReply:
     first_cost_usd: float
     cached: bool
     attempts: int = 1
+
+
+@dataclass(frozen=True)
+class Tool:
+    """A function the model may ask for in `Meter.agent`, run in the caller's own process.
+
+    `name`, `description` and `parameters`, a JSON Schema of the arguments, are sent to the
+    model and enter the request form; `run` never leaves the process. It takes the arguments
+    the model wrote, parsed from JSON, and returns the result the model is sent: a string as
+    it is, anything else as JSON. DeepSeek takes `parameters` in its strict mode, where every
+    object lists all its properties as required and sets `additionalProperties` to false.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    run: Callable[[dict[str, Any]], Any]
+
+
+@dataclass(frozen=True)
+class AgentReply:
+    """An agent's final answer. `text` is unvalidated, as `ChatReply.text` is.
+
+    `steps` counts its chat calls, the last included; `cost_usd` is what they paid, zero for
+    each cache hit.
+    """
+
+    text: str
+    steps: int
+    cost_usd: float
 
 
 @dataclass(frozen=True)
@@ -295,6 +333,86 @@ class Meter:
         return ChatReply(
             r["text"], r["usage"], r["cost_usd"], r["first_cost_usd"], r["cached"], r["attempts"]
         )
+
+    def agent(
+        self,
+        model: Model,
+        *,
+        user: str | list[dict[str, Any]],
+        tools: Sequence[Tool],
+        max_steps: int,
+        system: str | None = None,
+        schema: dict[str, Any] | None = None,
+        tag: str | None = None,
+    ) -> AgentReply:
+        """Run an agent: chat calls in a loop that runs each tool the model asks for.
+
+        Each step is one chat call, cached as any other, sent with the agent's own messages
+        so far: the first call's, then each turn that asked for tools and each tool's result.
+        The loop ends when the model answers without asking for a tool. `user`, `system`,
+        `schema` and `tag` are `chat`'s. Agents may run from many threads on one meter, each
+        with its own messages, and share its ceiling.
+
+        Raises
+        ------
+        StepLimitReached
+            The model still asked for tools at step `max_steps`.
+        UnknownTool
+            The model asked for a tool not in `tools`.
+        ValueError
+            `max_steps` is not a whole number from 1, or two tools share a name.
+
+        Every error `chat` raises, and any error a tool's `run` raises, comes out unchanged,
+        and the agent ends there.
+        """
+        if isinstance(max_steps, bool) or not isinstance(max_steps, int) or max_steps < 1:
+            raise ValueError(f"max_steps must be a whole number from 1, not {max_steps!r}")
+        by_name = {t.name: t for t in tools}
+        if len(by_name) != len(tools):
+            raise ValueError("two tools share a name")
+        definitions = [
+            {"name": t.name, "description": t.description, "parameters": t.parameters}
+            for t in tools
+        ]
+        form = wire.chat_form(model, user=user, system=system, schema=schema, tools=definitions)
+        messages: list[dict[str, Any]] = list(form["messages"])
+        cost, step = 0.0, 0
+        while True:
+            step += 1
+            r = self._call({**form, "messages": list(messages)}, tag)
+            cost += float(r["cost_usd"])
+            calls = r.get("tool_calls")
+            if not calls:
+                return AgentReply(r["text"], step, cost)
+            unknown = [c["name"] for c in calls if c["name"] not in by_name]
+            if unknown:
+                raise UnknownTool(
+                    f"the model asked for {', '.join(unknown)}, which the agent was not given"
+                )
+            if step == max_steps:
+                raise StepLimitReached(
+                    f"the agent reached its limit of {max_steps} steps, and the model still "
+                    f"asked for tools: {', '.join(c['name'] for c in calls)}"
+                )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": r["text"] or None,
+                    "tool_calls": [
+                        {
+                            "id": c["id"],
+                            "type": "function",
+                            "function": {"name": c["name"], "arguments": c["arguments"]},
+                        }
+                        for c in calls
+                    ],
+                }
+            )
+            for c in calls:
+                result = by_name[c["name"]].run(json.loads(c["arguments"] or "{}"))
+                if not isinstance(result, str):
+                    result = json.dumps(result, ensure_ascii=False)
+                messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
 
     def jev(
         self,

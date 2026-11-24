@@ -7,6 +7,23 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `Meter.agent` runs an agent: chat calls in a loop with a list of `Tool`s, each a name, a
+  description, a JSON Schema of its arguments and your own function. When the model asks for
+  a tool, your function runs and its result goes back to the model. The loop ends when the
+  model gives its final answer, which fits the `schema` if you gave one. It raises
+  `StepLimitReached` when the model still asks for tools at the step limit you set, and
+  `UnknownTool` when it asks for a tool you did not give; neither runs a tool from that step.
+  Several agents may run at once on one meter and share its ceiling. Each step is cached like
+  any chat call, so a rerun replays a whole agent for free while your tools return the same
+  results.
+- The fake gateway in `labllm.testing` plays a model asking for tools: its provider function
+  returns a list of `ToolCall`.
+- The lab gateway sends an agent's tools to DeepSeek in its strict mode, and refuses tools
+  for other providers before a paid call. Agents need this upgraded gateway: an older one
+  drops the tools without a word.
+
 ## [2026.11.6] - 2026-11-22
 
 ### Fixed

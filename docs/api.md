@@ -21,6 +21,10 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.client.JevReply
 
+::: labllm.client.Tool
+
+::: labllm.client.AgentReply
+
 ::: labllm.client.Transport
 
 ## Passes over many units

@@ -61,15 +61,31 @@ def running(server: Server, port: int = 0) -> Iterator[str]:
 
 
 def stand_in(fn: Any, prices: Mapping[str, Price]) -> Provider:
-    """Adapt a suite provider function into the gateway's chat provider, by the fake's token rule."""
+    """Adapt a suite provider function into the gateway's chat provider, by the fake's rules.
+
+    A list of `labllm.testing.ToolCall` it returns becomes tool calls, numbered as the fake
+    numbers them.
+    """
 
     def provider(form: dict[str, Any]) -> Attempt:
-        out = fn(form)
+        out, calls = fn(form), None
+        if isinstance(out, list):
+            before = sum(len(m.get("tool_calls") or ()) for m in form["messages"])
+            calls = [
+                {
+                    "id": f"call_{before + i}",
+                    "name": c.name,
+                    "arguments": json.dumps(c.arguments, ensure_ascii=False),
+                }
+                for i, c in enumerate(out)
+            ]
+            out = ""
         price = prices[form["model"]]
-        input_tokens = sum(len(m["content"]) for m in form["messages"])
-        cost = input_tokens * price.input_usd_per_token + len(out) * price.output_usd_per_token
-        usage = {"input_tokens": input_tokens, "output_tokens": len(out)}
-        return Attempt(output=out, usage=usage, cost_usd=cost)
+        input_tokens = sum(len(m["content"] or "") for m in form["messages"])
+        output_tokens = len(out) + sum(len(c["name"]) + len(c["arguments"]) for c in calls or [])
+        cost = input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
+        usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        return Attempt(output=out, usage=usage, cost_usd=cost, tool_calls=calls)
 
     return provider
 
