@@ -20,6 +20,7 @@ Examples
 import base64
 import binascii
 import hashlib
+import io
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -41,8 +42,8 @@ KINDS = {
 #: The largest file of each kind DeepSeek takes, in bytes.
 MAX_BYTES = {"document": 100 * 2**20, "spreadsheet": 32 * 2**20}
 
-#: The most pages of one document DeepSeek parses. Nothing here counts pages: DeepSeek refuses
-#: a longer one, and the gateway rejects the call.
+#: The most pages of one document DeepSeek parses: DeepSeek refuses a longer one, and the
+#: gateway rejects the call.
 MAX_PAGES = 1000
 
 #: The most files one call may carry.
@@ -103,8 +104,31 @@ class Attached:
 
     @property
     def most_usd(self) -> float:
-        """The most DeepSeek can charge to parse it: a document at its page limit."""
-        return MAX_PAGES * USD_PER_PAGE if self.kind == "document" else 0.0
+        """The most DeepSeek can charge to parse it.
+
+        A PDF counts at its pages, up to `MAX_PAGES`. Any other document, and a PDF that
+        `pages` cannot count, counts at `MAX_PAGES`. A spreadsheet is free.
+        """
+        if self.kind != "document":
+            return 0.0
+        return min(self.pages() or MAX_PAGES, MAX_PAGES) * USD_PER_PAGE
+
+    def pages(self) -> int | None:
+        """Return a PDF's page count, or None for another file or a PDF that will not open.
+
+        A PDF will not open when it is encrypted or damaged, or without the `gateway` extra,
+        whose `pypdf` reads it.
+        """
+        if PurePosixPath(self.filename).suffix.lower() != ".pdf":
+            return None
+        try:
+            import pypdf
+        except ImportError:
+            return None
+        try:
+            return len(pypdf.PdfReader(io.BytesIO(self.data)).pages)
+        except Exception:  # pypdf raises errors of many classes on a damaged file.
+            return None
 
 
 def is_file(part: Any) -> bool:

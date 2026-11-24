@@ -25,6 +25,12 @@ text. DeepSeek keeps each upload for a day. The gateway reuses an upload for mos
 day, and uploads the file again after that or after it restarts. The record keeps each file's
 name and SHA-256 fingerprint, not the file.
 
+DeepSeek charges by the page to read a PDF, Word or PowerPoint file, and its reply does not
+say how many pages it read. So the gateway counts a PDF's pages itself before the call, and
+counts the call against the meter at that many pages. It cannot count the pages of a Word or
+PowerPoint file, or of a PDF that is locked or damaged. Such a file counts as 1,000 pages,
+the most DeepSeek reads, so the meter shows more than DeepSeek charged. Excel files are free.
+
 ## Point the library at it
 
 In another terminal, set `LABLLM_GATEWAY` to the address it printed, then call as usual:

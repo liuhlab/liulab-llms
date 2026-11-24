@@ -7,6 +7,15 @@ sets one.
 
 ## [Unreleased]
 
+### Changed
+
+- A PDF now counts against a meter at its own pages, not at 1,000 pages. Before, each PDF a
+  call carried counted as 0.225 US dollars, so a long PDF cut into short parts used up a
+  ceiling far faster than DeepSeek's real charge. Word and PowerPoint files, and a PDF that
+  is locked or damaged, still count as 1,000 pages. The gateway extra now installs `pypdf`
+  to count the pages. The fake gateway in `labllm.testing` counts them the same way when
+  `pypdf` is installed, and as 1,000 pages when it is not.
+
 ## [2026.11.7] - 2026-11-24
 
 ### Added

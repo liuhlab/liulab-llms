@@ -49,6 +49,20 @@ PRICES: Mapping[str, Price] = {
 }
 
 
+def blank_pdf(pages: int) -> bytes:
+    """A PDF of `pages` blank pages."""
+    import io
+
+    import pypdf
+
+    writer = pypdf.PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=72, height=72)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 class Harness(Protocol):
     """One gateway, fresh for one test."""
 

@@ -33,6 +33,8 @@ gateway = [
     "typesafe-sdk>=0.7.5,<0.8",
     # The chat provider reads its errors. Any version the pinned LiteLLM takes.
     "openai",
+    # Counts a PDF's pages, so its parsing counts at its pages rather than DeepSeek's bound.
+    "pypdf>=6",
 ]
 
 # ============================== build ==============================
@@ -92,6 +94,7 @@ postgresql = "*"
 importlib-metadata = "<9"
 # The same: the pinned LiteLLM asks for >=2.20,<3, and conda-forge's newest is 3.
 openai = ">=2.20,<3"
+pypdf = ">=6"
 
 # Exact: at 0.0.x nothing promises the next patch is compatible.
 [tool.pixi.feature.docs.dependencies]

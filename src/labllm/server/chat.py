@@ -296,7 +296,7 @@ class _Uploads:
         """Return DeepSeek's id for `f` and what this call paid to parse it.
 
         A recent upload of the same file is reused, at no cost. A new document's parsing
-        counts at its bound, since DeepSeek reports no page count.
+        counts as `files.Attached.most_usd`, since DeepSeek reports no page count.
 
         Raises
         ------
