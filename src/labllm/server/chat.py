@@ -135,21 +135,37 @@ class LiteLLMChat:
             body = response.model_dump(mode="json")
             usage = response.usage.model_dump(mode="json", exclude_none=True)
         message = response.choices[0].message
-        output = message.content or ""
-        if form["provider"] == "deepseek" and form.get("schema") is not None:
-            calls = message.tool_calls or []
-            output = (
-                calls[0].function.arguments or ""
-                if len(calls) == 1 and calls[0].function.name == "answer"
-                else ""
-            )
+        output, tool_calls = message.content or "", None
+        if form["provider"] == "deepseek":
+            output, tool_calls = _functions_called(form, message)
         return Attempt(
             output=output,
             usage=usage,
             cost_usd=self._prices.cost(form, response),
             response=body,
             input_tokens=response.usage.prompt_tokens,
+            tool_calls=tool_calls,
         )
+
+
+def _functions_called(form: dict[str, Any], message: Any) -> tuple[str, list[Any] | None]:
+    """Return a DeepSeek reply's output and the caller's tools it asks for.
+
+    With a schema, a call to `answer` is the final answer: its arguments are the output. The
+    tools are None for a form without tools, and empty for a final answer.
+    """
+    calls = message.tool_calls or []
+    no_calls = [] if form.get("tools") else None
+    if form.get("schema") is not None:
+        for call in calls:
+            if call.function.name == "answer":
+                return call.function.arguments or "", no_calls
+    if form.get("tools") and calls:
+        asked = [
+            {"id": c.id, "name": c.function.name, "arguments": c.function.arguments} for c in calls
+        ]
+        return message.content or "", asked
+    return ("" if form.get("schema") is not None else message.content or ""), no_calls
 
 
 def _body(original: Any) -> dict[str, Any] | None:
@@ -180,17 +196,25 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
 
     DeepSeek takes `thinking` on or off and its effort level, which LiteLLM would drop, in the
     request body. A DeepSeek schema becomes one strict function call, which requires thinking
-    off. Other providers get native schema output and the effort as `reasoning_effort`, and
-    refuse `thinking`. OpenAI's own client retries unless told not to.
+    off. An agent's tools go to DeepSeek as strict functions too, beside the schema's `answer`;
+    with a schema, the model must call one of them. Other providers get native schema output
+    and the effort as `reasoning_effort`, and refuse `thinking`. OpenAI's own client retries
+    unless told not to.
 
     Raises
     ------
     Rejected
-        The form names the Jev provider, or `thinking` for a provider other than DeepSeek.
+        The form names the Jev provider, `thinking` for a provider other than DeepSeek, tools
+        for one, or a tool named `answer` beside a schema.
     """
     provider, settings, schema = form["provider"], form["settings"], form.get("schema")
+    tools = form.get("tools") or []
     if provider == "typesafe":
         raise Rejected("Jev calls take the jev route")
+    if tools and provider != "deepseek":
+        raise Rejected(f"the gateway sends an agent's tools to DeepSeek only, not {provider}")
+    if schema is not None and any(tool["name"] == "answer" for tool in tools):
+        raise Rejected("an agent's tool may not be named answer: the schema's function is")
     kwargs: dict[str, Any] = {
         "model": f"{provider}/{form['model']}",
         "messages": _messages(form),
@@ -199,18 +223,19 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     if settings["temperature"] is not None:
         kwargs["temperature"] = settings["temperature"]
     if provider == "deepseek":
+        functions = [{**tool, "strict": True} for tool in tools]
         if schema is not None:
+            functions.append({"name": "answer", "parameters": schema, "strict": True})
+        if functions:
             if settings["thinking"] is True:
                 raise Rejected("DeepSeek strict function calls need thinking off")
             kwargs["thinking"] = {"type": "disabled"}
             kwargs["_skip_mcp_handler"] = True
-            kwargs["tools"] = [
-                {
-                    "type": "function",
-                    "function": {"name": "answer", "parameters": schema, "strict": True},
-                }
-            ]
-            kwargs["tool_choice"] = {"type": "function", "function": {"name": "answer"}}
+            kwargs["tools"] = [{"type": "function", "function": f} for f in functions]
+            if schema is not None:
+                kwargs["tool_choice"] = (
+                    "required" if tools else {"type": "function", "function": {"name": "answer"}}
+                )
         elif settings["thinking"] is not None:
             kwargs["thinking"] = {"type": "enabled" if settings["thinking"] else "disabled"}
         if settings["effort"] is not None:

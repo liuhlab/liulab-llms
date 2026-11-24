@@ -15,14 +15,41 @@ from labllm.model import Price
 from labllm.peak import OffPeak
 from labllm.retry import Retries, unreadable
 
-__all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider"]
+__all__ = ["Exchange", "FakeClock", "FakeGateway", "OffPeak", "Price", "Provider", "ToolCall"]
 
 Provider = Callable[[dict[str, Any]], Any]
 """Plays the provider: takes a request form and returns the reply text, or Jev's answers.
 
-It may raise one of the four stops or `Rejected`, as a provider would; any other exception
-plays a response the gateway cannot read.
+For a model asking for tools, it returns a list of `ToolCall`. It may raise one of the four
+stops or `Rejected`, as a provider would; any other exception plays a response the gateway
+cannot read.
 """
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool a played model asks for: a provider function returns a list of these.
+
+    The fake sends `arguments` as JSON, and gives each call an id unique in its agent.
+
+    Examples
+    --------
+    An agent's first step asks for a tool, and the step after its result answers:
+
+    >>> from labllm import Model, Tool
+    >>> def model(form):
+    ...     if form["messages"][-1]["role"] == "user":
+    ...         return [ToolCall("double", {"n": 21})]
+    ...     return form["messages"][-1]["content"]
+    >>> double = Tool("double", "Double a number.", {"type": "object"}, lambda a: 2 * a["n"])
+    >>> fake = FakeGateway(model, prices={"m": Price(0.0, 0.001)})
+    >>> with fake.client().meter("example", ceiling_usd=10.0) as m:
+    ...     m.agent(Model("deepseek", "m"), user="Double 21.", tools=[double], max_steps=2).text
+    '42'
+    """
+
+    name: str
+    arguments: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -119,9 +146,10 @@ class FakeGateway:
     peak hours, and from `peak_margin_s` before they start.
 
     The provider's tokens are counted as characters: input is the messages' text, or Jev's
-    description and its questions as JSON; output is the reply text, or Jev's answers as JSON.
-    A file from `labllm.files.file_part` reaches `provider` as its block, after the real
-    gateway's checks and reservation; the fake charges nothing for parsing it.
+    description and its questions as JSON; output is the reply text and each tool call's name
+    and arguments, or Jev's answers as JSON. A file from `labllm.files.file_part` reaches
+    `provider` as its block, after the real gateway's checks and reservation; the fake charges
+    nothing for parsing it.
 
     Examples
     --------
@@ -145,7 +173,7 @@ class FakeGateway:
         self._provider = provider
         self._prices = dict(prices)
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[Any, dict[str, Any], float]] = {}
+        self._cache: dict[str, tuple[dict[str, Any], dict[str, Any], float]] = {}
         self._ceilings = Ceilings()
         self._record: list[Exchange] = []
         self._refusals: float = 0
@@ -201,15 +229,17 @@ class FakeGateway:
             if hit is None:
                 return None
             self._log(call, key, cached=True)
-        out, usage, first_cost = hit
+        answer, usage, first_cost = hit
+        route = call.form["route"]
         return wire.reply(
-            call.form["route"],
-            out,
+            route,
+            answer[wire.output_field(route)],
             usage,
             cost_usd=0.0,
             first_cost_usd=first_cost,
             cached=True,
             attempts=0,
+            tool_calls=answer.get("tool_calls"),
         )
 
     def _attempts(self, call: wire.Call, key: str, price: Price) -> dict[str, Any]:
@@ -238,21 +268,27 @@ class FakeGateway:
                 except BaseException:
                     self._ceilings.settle(meter, reserve, 0.0)
                     raise
-                chat = form["route"] == "chat"
-                output_tokens = len(out) if chat else len(json.dumps(out))
+                if form["route"] == "chat":
+                    out, calls, output_tokens = _played_chat(form, out)
+                else:
+                    calls, output_tokens = None, len(json.dumps(out))
                 usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
                 cost = (
                     input_tokens * price.input_usd_per_token
                     + output_tokens * price.output_usd_per_token
                 )
-                empty = None if out else ProviderUnavailable("the provider sent an empty reply")
+                empty = (
+                    None
+                    if out or calls
+                    else ProviderUnavailable("the provider sent an empty reply")
+                )
                 self._ceilings.settle(meter, reserve, cost)
                 with self._lock:
                     if empty is not None:
                         self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
                     else:
-                        self._cache.setdefault(key, (out, usage, cost))
-                        reply = {wire.output_field(form["route"]): out}
+                        reply = wire.recorded_reply(form["route"], out, calls)
+                        self._cache.setdefault(key, (reply, usage, cost))
                         self._log(call, key, form=form, reply=reply, cost_usd=cost)
                 if empty is not None:
                     paid += cost
@@ -266,6 +302,7 @@ class FakeGateway:
                     first_cost_usd=cost,
                     cached=False,
                     attempts=retries.attempts,
+                    tool_calls=calls,
                 )
         except (Stopped, Rejected, PeakHours) as e:
             e.cost_usd, e.attempts = paid, retries.attempts
@@ -303,5 +340,28 @@ class FakeGateway:
 
 def _input_tokens(form: dict[str, Any]) -> int:
     if form["route"] == "chat":
-        return sum(len(m["content"]) for m in form["messages"])
+        return sum(len(m["content"] or "") for m in form["messages"])
     return len(form["description"]) + len(json.dumps(form["questions"]))
+
+
+def _played_chat(
+    form: dict[str, Any], out: str | list[ToolCall]
+) -> tuple[str, list[dict[str, Any]] | None, int]:
+    """Return a played chat reply's text, its tool calls and its output tokens.
+
+    The tool calls are as a reply carries them, numbered on from the form's own: None for a
+    form without tools, and empty for a final answer.
+    """
+    calls: list[dict[str, Any]] | None = [] if form.get("tools") else None
+    if isinstance(out, list):
+        before = sum(len(m.get("tool_calls") or ()) for m in form["messages"])
+        calls = [
+            {
+                "id": f"call_{before + i}",
+                "name": c.name,
+                "arguments": json.dumps(c.arguments, ensure_ascii=False),
+            }
+            for i, c in enumerate(out)
+        ]
+        out = ""
+    return out, calls, len(out) + sum(len(c["name"]) + len(c["arguments"]) for c in calls or [])

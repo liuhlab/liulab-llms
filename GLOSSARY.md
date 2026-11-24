@@ -4,6 +4,15 @@ The words for model calls through the lab gateway, and for the work run over man
 
 ## Glossary
 
+### Agent
+
+Chat calls in a loop with the caller's tools: when the model asks for a tool, the caller's
+own function for it runs and its result goes back to the model, until the model answers
+without asking for one or the agent reaches its step limit. A step is one chat call. Each
+agent keeps its own messages; several may run at once under one meter and share its ceiling.
+A calling repo's subagent is one agent.
+_Avoid_: tool loop, conversation
+
 ### Ceiling
 
 A meter's limit in dollars, required and with no default. The gateway refuses a call whose

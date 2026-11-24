@@ -23,7 +23,7 @@ from labllm.client import HttpTransport
 from labllm.server import Attempt, Prices, Provider, Record, Server
 from labllm.server.jev import TypeSafeJev
 from labllm.server.throwaway import throwaway_database
-from labllm.testing import Exchange, FakeClock, Price
+from labllm.testing import Exchange, FakeClock, Price, _played_chat
 
 _session = ExitStack()
 _database: list[str] = []
@@ -61,15 +61,18 @@ def running(server: Server, port: int = 0) -> Iterator[str]:
 
 
 def stand_in(fn: Any, prices: Mapping[str, Price]) -> Provider:
-    """Adapt a suite provider function into the gateway's chat provider, by the fake's token rule."""
+    """Adapt a suite provider function into the gateway's chat provider, by the fake's rules.
+
+    A list of `labllm.testing.ToolCall` it returns becomes tool calls, as the fake plays them.
+    """
 
     def provider(form: dict[str, Any]) -> Attempt:
-        out = fn(form)
+        out, calls, output_tokens = _played_chat(form, fn(form))
         price = prices[form["model"]]
-        input_tokens = sum(len(m["content"]) for m in form["messages"])
-        cost = input_tokens * price.input_usd_per_token + len(out) * price.output_usd_per_token
-        usage = {"input_tokens": input_tokens, "output_tokens": len(out)}
-        return Attempt(output=out, usage=usage, cost_usd=cost)
+        input_tokens = sum(len(m["content"] or "") for m in form["messages"])
+        cost = input_tokens * price.input_usd_per_token + output_tokens * price.output_usd_per_token
+        usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        return Attempt(output=out, usage=usage, cost_usd=cost, tool_calls=calls)
 
     return provider
 

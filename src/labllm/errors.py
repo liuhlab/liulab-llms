@@ -1,4 +1,7 @@
-"""The errors a call raises: four that stop the caller's loop, and `Rejected`."""
+"""The errors a call raises: four that stop the caller's loop, and `Rejected`.
+
+An agent also raises its own when it ends with no final answer, and stops only itself.
+"""
 
 from typing import ClassVar
 
@@ -81,3 +84,17 @@ class PeakHours(Exception):  # noqa: N818 - named for what the gateway says
 
 STOPS = (CeilingReached, ProviderExhausted, ProviderUnavailable, GatewayUnreachable)
 """The four stops: every `Stopped` error a call raises is one of them."""
+
+
+class StepLimitReached(Exception):  # noqa: N818 - the name callers catch
+    """An agent made its last allowed step and the model still asked for tools.
+
+    No further call was sent, and none of that step's tools was run.
+    """
+
+
+class UnknownTool(Exception):  # noqa: N818 - the name callers catch
+    """The model asked an agent for a tool it was not given.
+
+    No further call was sent, and none of that step's tools was run.
+    """

@@ -15,6 +15,23 @@ sets one.
   and counts what it may cost against the meter's ceiling. A file for another provider, of
   another type, or over DeepSeek's size limit is refused before anything is sent. The fake
   gateway in `labllm.testing` takes file calls by the same rules.
+- `Meter.agent` runs an agent: chat calls in a loop with a list of `Tool`s, each a name, a
+  description, a JSON Schema of its arguments and your own function. When the model asks for
+  a tool, your function runs and its result goes back to the model. The loop ends when the
+  model gives its final answer, which DeepSeek's strict mode holds to the `schema` if you
+  gave one; as with `chat`, the client does not check it. It raises
+  `StepLimitReached` when the model still asks for tools at the step limit you set, and
+  `UnknownTool` when it asks for a tool you did not give; neither runs a tool from that step.
+  Several agents may run at once on one meter and share its ceiling. Each step is cached like
+  any chat call, so a rerun replays a whole agent for free while your tools return the same
+  results.
+- The fake gateway in `labllm.testing` plays a model asking for tools: its provider function
+  returns a list of `ToolCall`.
+- The lab gateway sends an agent's tools to DeepSeek in its strict mode, and refuses tools
+  for other providers, or a tool named `answer` beside a schema, before a paid call. Agents
+  need this upgraded gateway. An older one drops the tools, pays for one step and caches its
+  answer; the agent then raises `GatewayUnreachable` on that step, and again whenever the
+  upgraded gateway replays it.
 
 ## [2026.11.6] - 2026-11-22
 

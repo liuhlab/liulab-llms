@@ -11,20 +11,26 @@ from typing import Any
 
 import pytest
 
-from harness import CHAT, HOUR, JEV, MONDAY, PEAK, VISION, Harness
+from harness import AGENT, CHAT, HOUR, JEV, MONDAY, PEAK, VISION, Harness
 from labllm import (
+    AgentReply,
     CeilingReached,
     Gateway,
     GatewayUnreachable,
+    Meter,
     Model,
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
+    StepLimitReached,
     Stopped,
+    Tool,
+    UnknownTool,
     files,
     wire,
 )
 from labllm.peak import MARGIN_S
+from labllm.testing import ToolCall
 
 #: A PDF's header and trailer alone; the provider is played, so nothing parses it.
 PDF = b"%PDF-1.4\n%%EOF\n"
@@ -679,3 +685,124 @@ def test_many_off_peak_only_calls_wait_through_peak_together(harness: Harness) -
         replies = list(pool.map(lambda i: m.chat(PEAK, user=f"doc {i}"), range(16)))
     assert all(r.text == "abc" for r in replies)
     assert sent_at == [MONDAY + 10 * HOUR] * 16
+
+
+LOOKUP = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}},
+    "required": ["name"],
+    "additionalProperties": False,
+}
+
+
+def lookup(asked: list[dict[str, Any]]) -> Tool:
+    """A tool that keeps the arguments of each request and finds company 7 by any name."""
+    return Tool(
+        name="lookup",
+        description="Find a company by name.",
+        parameters=LOOKUP,
+        run=lambda arguments: asked.append(arguments) or {"id": 7, "name": arguments["name"]},
+    )
+
+
+def test_an_agent_runs_the_tool_the_model_asks_for_and_returns_its_final_answer(
+    harness: Harness,
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def model(form: dict[str, Any]) -> Any:
+        seen.append(form)
+        if form["messages"][-1]["role"] == "user":
+            return [ToolCall("lookup", {"name": "Acme"})]
+        return '{"n": 7}'
+
+    harness.provider(model)
+    asked: list[dict[str, Any]] = []
+    for label in ("agent", "rerun"):
+        with harness.client().meter(label, ceiling_usd=1.0) as m:
+            r = m.agent(
+                AGENT, user="Who is Acme?", schema=SCHEMA, tools=[lookup(asked)], max_steps=3
+            )
+        assert (r.text, r.steps) == ('{"n": 7}', 2)
+    assert (m.cache_hits, r.cost_usd, len(seen)) == (2, 0.0, 2)  # the rerun replays each step
+    assert asked == [{"name": "Acme"}] * 2
+    assert seen[0]["tools"] == [
+        {"name": "lookup", "description": "Find a company by name.", "parameters": LOOKUP}
+    ]
+    assert [message["role"] for message in seen[1]["messages"]] == ["user", "assistant", "tool"]
+    assert seen[1]["messages"][-1]["content"] == '{"id": 7, "name": "Acme"}'
+
+
+def test_an_agent_at_its_step_limit_stops_with_an_error_and_sends_nothing_more(
+    harness: Harness,
+) -> None:
+    calls: list[int] = []
+
+    def model(form: dict[str, Any]) -> Any:
+        calls.append(len(form["messages"]))
+        return [ToolCall("lookup", {"name": "Acme"})]
+
+    harness.provider(model)
+    asked: list[dict[str, Any]] = []
+    with (
+        harness.client().meter("agent", ceiling_usd=1.0) as m,
+        pytest.raises(StepLimitReached, match="3 steps"),
+    ):
+        m.agent(AGENT, user="Who is Acme?", schema=SCHEMA, tools=[lookup(asked)], max_steps=3)
+    assert calls == [1, 3, 5]  # each step one call, with one more turn and its result
+    assert len(asked) == 2  # the last step's request is not run
+
+
+def test_an_agent_asked_for_a_tool_it_was_not_given_runs_none_and_stops(
+    harness: Harness,
+) -> None:
+    calls: list[str] = []
+    harness.provider(
+        lambda form: (
+            calls.append("sent")
+            or [ToolCall("lookup", {"name": "Acme"}), ToolCall("delete_company", {"id": 7})]
+        )
+    )
+    asked: list[dict[str, Any]] = []
+    with (
+        harness.client().meter("agent", ceiling_usd=1.0) as m,
+        pytest.raises(UnknownTool, match="delete_company"),
+    ):
+        m.agent(AGENT, user="Who is Acme?", schema=SCHEMA, tools=[lookup(asked)], max_steps=3)
+    assert (calls, asked) == (["sent"], [])
+
+
+def test_agents_in_parallel_share_their_meters_ceiling(harness: Harness) -> None:
+    together = threading.Barrier(3, timeout=10)
+
+    def part(i: int) -> Tool:
+        def rows(arguments: dict[str, Any]) -> str:
+            together.wait()  # all three agents are inside their loops at once
+            return str(100 + i)
+
+        return Tool("get_rows", "Read this part's rows.", {"type": "object"}, rows)
+
+    calls: list[str] = []
+
+    def model(form: dict[str, Any]) -> Any:
+        calls.append("sent")
+        last = form["messages"][-1]
+        if last["role"] == "user":
+            return [ToolCall("get_rows", {})]
+        return f'{{"n": {last["content"]}}}'
+
+    harness.provider(model)
+
+    def agent(m: Meter, i: int) -> AgentReply:
+        return m.agent(AGENT, user=f"part {i}", schema=SCHEMA, tools=[part(i)], max_steps=2)
+
+    # Each step writes exactly AGENT's allowance of 10 tokens, so it costs what it holds, 0.10.
+    # The three first steps fit a ceiling of 0.55; of the three second steps, whichever comes
+    # last would cross it, so exactly one agent is refused and the other two still answer.
+    with harness.client().meter("parts", ceiling_usd=0.55) as m, ThreadPoolExecutor(3) as pool:
+        runs = {i: pool.submit(agent, m, i) for i in (1, 2, 3)}
+    refused = [i for i, run in runs.items() if isinstance(run.exception(), CeilingReached)]
+    answers = {i: run.result().text for i, run in runs.items() if i not in refused}
+    assert len(refused) == 1
+    assert answers == {i: f'{{"n": {100 + i}}}' for i in answers}
+    assert (len(calls), m.spent_usd) == (5, pytest.approx(0.50))

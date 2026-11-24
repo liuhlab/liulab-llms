@@ -2,7 +2,7 @@
 
 from importlib.metadata import version
 
-from labllm.client import ChatReply, Gateway, JevReply, Meter
+from labllm.client import AgentReply, ChatReply, Gateway, JevReply, Meter, Tool
 from labllm.engine import Held, Inputs, PassResult, QueueEntry, Role, Task, Unit, UnitEnd, UnitKind
 from labllm.errors import (
     CeilingReached,
@@ -10,7 +10,9 @@ from labllm.errors import (
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
+    StepLimitReached,
     Stopped,
+    UnknownTool,
 )
 from labllm.model import Model
 from labllm.reviews import ChecksFailed, Review, Reviews
@@ -21,6 +23,7 @@ from labllm.state import CheckResult, Outcome, Pass, Stamp, TaskInUse, UnitCost,
 __version__ = version("liulab-llms")
 
 __all__ = [
+    "AgentReply",
     "CeilingReached",
     "ChatReply",
     "CheckResult",
@@ -43,13 +46,16 @@ __all__ = [
     "Reviews",
     "Role",
     "Stamp",
+    "StepLimitReached",
     "Stopped",
     "Task",
     "TaskInUse",
+    "Tool",
     "Unit",
     "UnitCost",
     "UnitEnd",
     "UnitKind",
     "UnknownLayout",
+    "UnknownTool",
     "__version__",
 ]

@@ -17,11 +17,13 @@ IMAGE_TOKENS = {"anthropic": 4784, "deepseek": 1024, "openai": 73800}
 def input_bytes(form: dict[str, Any]) -> int:
     """Return the UTF-8 bytes of a form's input as JSON, leaving out its images and files.
 
-    For chat, the messages with their roles, each image or file part cut to its type, and the
-    schema; for Jev, its description and questions.
+    For chat, the messages with their roles, each image or file part cut to its type, the
+    schema and any tools; for Jev, its description and questions.
     """
     if form["route"] == "chat":
         sent = [[_without_media(m) for m in form["messages"]], form.get("schema")]
+        if form.get("tools"):
+            sent.append(form["tools"])
     else:
         sent = [form["description"], form["questions"]]
     return len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode())
