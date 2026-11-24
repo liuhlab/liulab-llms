@@ -1,5 +1,9 @@
-"""The real chat provider: one attempt through LiteLLM, with each provider's settings."""
+"""The real chat provider: one attempt through LiteLLM, with each provider's settings.
 
+A file for DeepSeek is uploaded to DeepSeek's Files API first, which LiteLLM does not reach.
+"""
+
+import dataclasses
 import json
 import os
 import threading
@@ -10,6 +14,7 @@ from typing import Any
 
 from labllm import files
 from labllm.errors import ProviderExhausted, ProviderUnavailable, Rejected
+from labllm.retry import unreadable
 from labllm.server.app import Attempt, retry_after_s
 from labllm.server.prices import Prices, litellm
 
@@ -35,9 +40,9 @@ _USED_UP = {
     "anthropic": ("credit balance is too low", "reached your specified api usage limits"),
 }
 
-#: DeepSeek's Files API, which LiteLLM does not reach.
 _DEEPSEEK = "https://api.deepseek.com"
-#: DeepSeek deletes an uploaded file after this long; the gateway reuses it for an hour less.
+#: How long DeepSeek keeps an upload. The gateway stops reusing one an hour sooner, so a chat
+#: never names a file DeepSeek has just deleted.
 _KEEP_S = 24 * 3600
 _REUSE_S = _KEEP_S - 3600
 
@@ -55,7 +60,7 @@ class LiteLLMChat:
         Prices each response.
     completion
         Replaces `litellm.completion`, so a test can play the provider.
-    files
+    files_api
         An OpenAI client of DeepSeek's Files API, which uploads each file a form carries. By
         default one at DeepSeek's address with the key in ``DEEPSEEK_API_KEY``.
     """
@@ -65,34 +70,54 @@ class LiteLLMChat:
         prices: Prices,
         *,
         completion: Callable[..., Any] | None = None,
-        files: Any = None,
+        files_api: Any = None,
     ) -> None:
         self._prices = prices
         self._completion = completion
-        self._uploads = _Uploads(files)
+        self._uploads = _Uploads(files_api)
 
     def as_sent(self, form: dict[str, Any]) -> dict[str, Any]:
         """Return `form` with the messages its provider is sent, for its reservation to count."""
         return {**form, "messages": _messages(form)}
 
     def __call__(self, form: dict[str, Any]) -> Attempt:
-        """Send `form` once and return what came back.
+        """Send `form` once, after uploading each file it carries, and return what came back.
+
+        A file's parsing is paid by the attempt that uploads it: in its cost, or in the
+        `cost_usd` of the error it raises if the chat then fails.
 
         Raises
         ------
         ProviderExhausted
             The provider says its balance or cap is used up.
         Rejected
-            The provider refused the request as malformed or unauthorized, or the form asks
-            for a setting its provider does not take.
+            The provider refused the request or a file as malformed or unauthorized, or the
+            form asks for a setting its provider does not take.
         ProviderUnavailable
             The provider failed in any other way. An empty reply is returned, not raised.
         """
+        parsing_usd = 0.0
+        try:
+            file_ids = []
+            for f in files.attached(form):
+                file_id, usd = self._uploads.file_id(f)
+                file_ids.append(file_id)
+                parsing_usd += usd
+            attempt = self._send(_by_file_id(form, file_ids))
+        except Exception as e:
+            if not parsing_usd:
+                raise
+            failure = unreadable(e, form["provider"])
+            failure.cost_usd = parsing_usd
+            if failure is e:
+                raise
+            raise failure from e
+        return dataclasses.replace(attempt, cost_usd=attempt.cost_usd + parsing_usd)
+
+    def _send(self, form: dict[str, Any]) -> Attempt:
         ll = litellm()
         import openai
 
-        attached = files.attached(form)
-        sent = _by_file_id(form, [self._uploads.file_id(f) for f in attached])
         completion = self._completion or ll.completion
         received: list[Any] = []
 
@@ -101,7 +126,7 @@ class LiteLLMChat:
                 received.append(details.get("original_response"))
 
         try:
-            response = completion(**request(sent), logger_fn=keep)
+            response = completion(**request(form), logger_fn=keep)
         except openai.APIError as e:
             raise _failure(ll, form["provider"], e) from e
         body = _body(received[-1] if received else None)
@@ -121,7 +146,7 @@ class LiteLLMChat:
         return Attempt(
             output=output,
             usage=usage,
-            cost_usd=self._prices.cost(form, response) + self._uploads.owed(attached),
+            cost_usd=self._prices.cost(form, response),
             response=body,
             input_tokens=response.usage.prompt_tokens,
         )
@@ -232,19 +257,21 @@ def _by_file_id(form: dict[str, Any], file_ids: list[str]) -> dict[str, Any]:
 class _Uploads:
     """The files the gateway has uploaded to DeepSeek, so each is parsed and paid for once a day.
 
-    A document's parsing is owed from its upload until an attempt that carries it returns, and
-    counts at its bound, since DeepSeek reports no page count. Each file uploads once at a time.
+    Each file uploads once at a time. The same bytes under another kind upload apart, since
+    each kind has its own purpose.
     """
 
     def __init__(self, client: Any) -> None:
         self._client = client
         self._lock = threading.Lock()
-        self._busy: dict[str, threading.Lock] = {}
-        self._ids: dict[str, tuple[str, float]] = {}
-        self._owed: dict[str, float] = {}
+        self._busy: dict[tuple[str, str], threading.Lock] = {}
+        self._ids: dict[tuple[str, str], tuple[str, float]] = {}
 
-    def file_id(self, f: files.Attached) -> str:
-        """Return DeepSeek's id for `f`, uploading it unless a recent upload can be reused.
+    def file_id(self, f: files.Attached) -> tuple[str, float]:
+        """Return DeepSeek's id for `f` and what this call paid to parse it.
+
+        A recent upload of the same file is reused, at no cost. A new document's parsing
+        counts at its bound, since DeepSeek reports no page count.
 
         Raises
         ------
@@ -253,23 +280,18 @@ class _Uploads:
         ProviderExhausted, ProviderUnavailable
             As for a chat request.
         """
+        key = (f.kind, f.sha256)
         with self._lock:
-            busy = self._busy.setdefault(f.digest, threading.Lock())
+            busy = self._busy.setdefault(key, threading.Lock())
         with busy:
             with self._lock:
-                known = self._ids.get(f.digest)
+                known = self._ids.get(key)
             if known is not None and time.monotonic() - known[1] < _REUSE_S:
-                return known[0]
+                return known[0], 0.0
             file_id = self._upload(f)
             with self._lock:
-                self._ids[f.digest] = (file_id, time.monotonic())
-                self._owed[f.digest] = self._owed.get(f.digest, 0.0) + f.most_usd
-            return file_id
-
-    def owed(self, attached: list[files.Attached]) -> float:
-        """Return, and clear, what parsing these files is owed."""
-        with self._lock:
-            return sum(self._owed.pop(f.digest, 0.0) for f in attached)
+                self._ids[key] = (file_id, time.monotonic())
+            return file_id, f.most_usd
 
     def _upload(self, f: files.Attached) -> str:
         import openai

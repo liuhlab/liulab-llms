@@ -21,7 +21,7 @@ def input_bytes(form: dict[str, Any]) -> int:
     schema; for Jev, its description and questions.
     """
     if form["route"] == "chat":
-        sent = [[_without_images(m) for m in form["messages"]], form.get("schema")]
+        sent = [[_without_media(m) for m in form["messages"]], form.get("schema")]
     else:
         sent = [form["description"], form["questions"]]
     return len(json.dumps(sent, ensure_ascii=False, separators=(",", ":")).encode())
@@ -83,7 +83,7 @@ def _is_image(part: Any) -> bool:
     return isinstance(part, dict) and part.get("type") == "image_url"
 
 
-def _without_images(message: Any) -> Any:
+def _without_media(message: Any) -> Any:
     parts = _content_parts(message)
     if not parts:
         return message

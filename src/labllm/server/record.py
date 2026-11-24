@@ -7,7 +7,7 @@ from typing import Any
 from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
-from labllm import wire
+from labllm import files, wire
 
 #: Run in order at every start; each statement is idempotent, so a later column is added with
 #: `ADD COLUMN IF NOT EXISTS` at the end. `json`, not `jsonb`: it keeps a body exactly as sent,
@@ -149,7 +149,10 @@ class Record:
         return float(row[0]) if row else 0.0
 
     def add(self, row: Row) -> int:
-        """Add one exchange, finished or not, and return its id."""
+        """Add one exchange, finished or not, and return its id.
+
+        A file in the form is kept as its SHA-256, as `labllm.files.digested` gives it.
+        """
         call, form = row.call, row.call.form
         values = {
             "started_at": row.started_at,
@@ -159,7 +162,7 @@ class Record:
             "provider": form["provider"],
             "model": form["model"],
             "cached": row.cached,
-            "form": None if row.cached else Json(form),
+            "form": None if row.cached else Json(files.digested(form)),
             "reply": _json(row.reply),
             "usage": _json(row.usage),
             "response": _json(row.response),

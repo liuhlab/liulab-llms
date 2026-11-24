@@ -26,7 +26,7 @@ from labllm import (
 )
 from labllm.peak import MARGIN_S
 
-#: The smallest file DeepSeek's parser would call a PDF; the provider is played, so it never reads it.
+#: A PDF's header and trailer alone; the provider is played, so nothing parses it.
 PDF = b"%PDF-1.4\n%%EOF\n"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
 #: Jev's questions, by name, as its API takes them.
@@ -139,8 +139,8 @@ def test_a_file_counts_as_the_most_deepseek_can_bill_for_it(harness: Harness) ->
 
     harness.provider(provider)
     content = [{"type": "text", "text": "Read this price list."}, files.file_part("p.pdf", PDF)]
-    # A 1,048,576-token context at 3e-7, 1,000 pages parsed at 0.000225 and 10 output tokens
-    # at 1.2e-6: 0.5396 USD, however small the file.
+    # The reservation is DeepSeek's whole context, 1,000 pages of parsing and the output
+    # allowance, however small the file: between these two ceilings.
     with harness.client().meter("too small", ceiling_usd=0.5) as m, pytest.raises(CeilingReached):
         m.chat(VISION, user=content)
     with harness.client().meter("enough", ceiling_usd=0.6) as m:

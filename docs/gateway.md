@@ -21,7 +21,9 @@ names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Jev's key g
 
 A call with a PDF, Word, PowerPoint or Excel file goes to DeepSeek alone. The gateway
 uploads the file to DeepSeek with the same `DEEPSEEK_API_KEY`, and DeepSeek reads it into
-text. DeepSeek keeps each upload for a day, and the gateway sends one again only after that.
+text. DeepSeek keeps each upload for a day. The gateway reuses an upload for most of that
+day, and uploads the file again after that or after it restarts. The record keeps each file's
+name and SHA-256 fingerprint, not the file.
 
 ## Point the library at it
 

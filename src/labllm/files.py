@@ -94,16 +94,12 @@ def file_part(filename: str, data: bytes) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class Attached:
-    """A file a chat form carries, read from its content block."""
+    """A file a chat form carries, read from its content block, with the SHA-256 of its bytes."""
 
     filename: str
     kind: str
     data: bytes
-
-    @property
-    def digest(self) -> str:
-        """The SHA-256 of its kind and bytes: one file uploaded once, whatever its name."""
-        return hashlib.sha256(self.kind.encode() + b"\0" + self.data).hexdigest()
+    sha256: str
 
     @property
     def most_usd(self) -> float:
@@ -126,15 +122,7 @@ def attached(form: dict[str, Any]) -> list[Attached]:
         that is not a well-formed file block, one DeepSeek does not parse, or one over its
         size limit.
     """
-    if form["route"] != "chat":
-        return []
-    blocks = [
-        p
-        for m in form["messages"]
-        if isinstance(m, dict) and isinstance(m.get("content"), list)
-        for p in m["content"]
-        if is_file(p)
-    ]
+    blocks = [p for p in _parts(form) if is_file(p)]
     if not blocks:
         return []
     if form["provider"] not in CONTEXT_TOKENS:
@@ -142,6 +130,42 @@ def attached(form: dict[str, Any]) -> list[Attached]:
     if len(blocks) > MAX_FILES:
         raise Rejected(f"a call carries at most {MAX_FILES} files, not {len(blocks)}")
     return [_read(block) for block in blocks]
+
+
+def digested(form: dict[str, Any]) -> dict[str, Any]:
+    """Return `form` as the gateway's record keeps it: each file by its name and SHA-256.
+
+    The cache key is still the hash of the whole form, the file's bytes included.
+
+    Raises
+    ------
+    Rejected
+        A file block is malformed, as `attached` checks.
+    """
+    if not any(is_file(p) for p in _parts(form)):
+        return form
+
+    def digest(part: Any) -> Any:
+        if not is_file(part):
+            return part
+        f = _read(part)
+        return {"type": "file", "file": {"filename": f.filename, "sha256": f.sha256}}
+
+    messages = [
+        {**m, "content": [digest(p) for p in m["content"]]} if _has_parts(m) else m
+        for m in form["messages"]
+    ]
+    return {**form, "messages": messages}
+
+
+def _parts(form: dict[str, Any]) -> list[Any]:
+    if form["route"] != "chat":
+        return []
+    return [p for m in form["messages"] if _has_parts(m) for p in m["content"]]
+
+
+def _has_parts(message: Any) -> bool:
+    return isinstance(message, dict) and isinstance(message.get("content"), list)
 
 
 def _read(block: dict[str, Any]) -> Attached:
@@ -155,7 +179,7 @@ def _read(block: dict[str, Any]) -> Attached:
     except (binascii.Error, ValueError) as e:
         raise Rejected(f"the file {name!r} is not valid base64: {e}") from e
     _check_size(name, len(data))
-    return Attached(name, _kind(name), data)
+    return Attached(name, _kind(name), data, hashlib.sha256(data).hexdigest())
 
 
 def _kind(filename: str) -> str:
