@@ -21,10 +21,13 @@ from labllm import (
     ProviderUnavailable,
     Rejected,
     Stopped,
+    files,
     wire,
 )
 from labllm.peak import MARGIN_S
 
+#: A PDF's header and trailer alone; the provider is played, so nothing parses it.
+PDF = b"%PDF-1.4\n%%EOF\n"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
 #: Jev's questions, by name, as its API takes them.
 QUESTIONS = {
@@ -99,6 +102,50 @@ def test_an_image_for_a_provider_with_no_image_bound_is_rejected_unsent(
     with harness.client().meter("unbounded", ceiling_usd=1.0) as m, pytest.raises(Rejected):
         m.chat(Model("unbounded", CHAT.name), user=content)
     assert provider.calls == 0
+
+
+def file_block(filename: str, data: bytes) -> dict[str, Any]:
+    """A file content block built by hand, so it can break the rules `files.file_part` keeps."""
+    url = "data:application/octet-stream;base64," + base64.b64encode(data).decode()
+    return {"type": "file", "file": {"filename": filename, "file_data": url}}
+
+
+def test_a_file_deepseek_cannot_take_is_rejected_unsent(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    monkeypatch.setitem(files.MAX_BYTES, "spreadsheet", 4)
+    cases = [
+        (CHAT, file_block("quote.pdf", PDF), "only DeepSeek"),
+        (VISION, file_block("quote.zip", PDF), "not a file type"),
+        (VISION, file_block("prices.xlsx", b"12345"), "over DeepSeek's limit"),
+    ]
+    with harness.client().meter("files", ceiling_usd=1.0) as m:
+        for model, block, why in cases:
+            with pytest.raises(Rejected, match=why):
+                m.chat(model, user=[{"type": "text", "text": "Read it."}, block])
+    assert provider.calls == 0
+    with pytest.raises(Rejected, match="over DeepSeek's limit"):
+        files.file_part("prices.xlsx", b"12345")
+
+
+def test_a_file_counts_as_the_most_deepseek_can_bill_for_it(harness: Harness) -> None:
+    seen: list[Any] = []
+
+    def provider(form: dict[str, Any]) -> str:
+        seen.append(form["messages"][0]["content"])
+        return "abc"
+
+    harness.provider(provider)
+    content = [{"type": "text", "text": "Read this price list."}, files.file_part("p.pdf", PDF)]
+    # The reservation is DeepSeek's whole context, 1,000 pages of parsing and the output
+    # allowance, however small the file: between these two ceilings.
+    with harness.client().meter("too small", ceiling_usd=0.5) as m, pytest.raises(CeilingReached):
+        m.chat(VISION, user=content)
+    with harness.client().meter("enough", ceiling_usd=0.6) as m:
+        assert m.chat(VISION, user=content).text == "abc"
+    assert seen == [content]
 
 
 def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) -> None:

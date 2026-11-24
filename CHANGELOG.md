@@ -7,6 +7,15 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- A DeepSeek chat call can carry PDF, Word, PowerPoint and Excel files. Build each one's
+  content block with `labllm.files.file_part`, and check a file's size before downloading it
+  with `labllm.files.max_bytes`. An upgraded lab gateway uploads the file for DeepSeek to read
+  and counts what it may cost against the meter's ceiling. A file for another provider, of
+  another type, or over DeepSeek's size limit is refused before anything is sent. The fake
+  gateway in `labllm.testing` takes file calls by the same rules.
+
 ## [2026.11.6] - 2026-11-22
 
 ### Fixed

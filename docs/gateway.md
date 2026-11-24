@@ -19,6 +19,12 @@ To call real models, it needs the provider keys. Set them before you start it, u
 names LiteLLM reads, such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`. Jev's key goes in
 `TYPESAFE_API_KEY`. Without a key, calls to that provider fail.
 
+A call with a PDF, Word, PowerPoint or Excel file goes to DeepSeek alone. The gateway
+uploads the file to DeepSeek with the same `DEEPSEEK_API_KEY`, and DeepSeek reads it into
+text. DeepSeek keeps each upload for a day. The gateway reuses an upload for most of that
+day, and uploads the file again after that or after it restarts. The record keeps each file's
+name and SHA-256 fingerprint, not the file.
+
 ## Point the library at it
 
 In another terminal, set `LABLLM_GATEWAY` to the address it printed, then call as usual:
