@@ -671,10 +671,14 @@ def test_an_agent_runs_the_tool_the_model_asks_for_and_returns_its_final_answer(
 
     harness.provider(model)
     asked: list[dict[str, Any]] = []
-    with harness.client().meter("agent", ceiling_usd=1.0) as m:
-        r = m.agent(AGENT, user="Who is Acme?", schema=SCHEMA, tools=[lookup(asked)], max_steps=3)
-    assert (r.text, r.steps) == ('{"n": 7}', 2)
-    assert asked == [{"name": "Acme"}]
+    for label in ("agent", "rerun"):
+        with harness.client().meter(label, ceiling_usd=1.0) as m:
+            r = m.agent(
+                AGENT, user="Who is Acme?", schema=SCHEMA, tools=[lookup(asked)], max_steps=3
+            )
+        assert (r.text, r.steps) == ('{"n": 7}', 2)
+    assert (m.cache_hits, r.cost_usd, len(seen)) == (2, 0.0, 2)  # the rerun replays each step
+    assert asked == [{"name": "Acme"}] * 2
     assert seen[0]["tools"] == [
         {"name": "lookup", "description": "Find a company by name.", "parameters": LOOKUP}
     ]
@@ -745,12 +749,13 @@ def test_agents_in_parallel_share_their_meters_ceiling(harness: Harness) -> None
     def agent(m: Meter, i: int) -> AgentReply:
         return m.agent(AGENT, user=f"part {i}", schema=SCHEMA, tools=[part(i)], max_steps=2)
 
-    # Each step writes exactly AGENT's allowance of 10 tokens, so it costs what it holds,
-    # 0.10, and three agents of two steps fit a ceiling of 0.65 in any order.
-    with harness.client().meter("parts", ceiling_usd=0.65) as m, ThreadPoolExecutor(3) as pool:
-        replies = list(pool.map(lambda i: agent(m, i), [1, 2, 3]))
-        with pytest.raises(CeilingReached):
-            agent(m, 4)  # 0.60 spent, and its first step's 0.10 would cross
-    assert [r.text for r in replies] == ['{"n": 101}', '{"n": 102}', '{"n": 103}']
-    assert [r.cost_usd for r in replies] == pytest.approx([0.20] * 3)
-    assert (len(calls), m.spent_usd) == (6, pytest.approx(0.60))
+    # Each step writes exactly AGENT's allowance of 10 tokens, so it costs what it holds, 0.10.
+    # The three first steps fit a ceiling of 0.55; of the three second steps, whichever comes
+    # last would cross it, so exactly one agent is refused and the other two still answer.
+    with harness.client().meter("parts", ceiling_usd=0.55) as m, ThreadPoolExecutor(3) as pool:
+        runs = {i: pool.submit(agent, m, i) for i in (1, 2, 3)}
+    refused = [i for i, run in runs.items() if isinstance(run.exception(), CeilingReached)]
+    answers = {i: run.result().text for i, run in runs.items() if i not in refused}
+    assert len(refused) == 1
+    assert answers == {i: f'{{"n": {100 + i}}}' for i in answers}
+    assert (len(calls), m.spent_usd) == (5, pytest.approx(0.50))

@@ -38,8 +38,9 @@ class Attempt:
     `output` is the reply text for chat, or Jev's answers; `usage` is the provider's usage as
     received; `response` is the provider's whole response, kept in the record. `input_tokens`
     is the input the provider counted, if known; it corrects the rate limit's estimate.
-    `tool_calls` are the tools the model asked for, as `labllm.wire` carries them. An empty
-    `output` with no tool calls is a failed attempt, paid for and tried again.
+    `tool_calls` are the tools the model asked for, as `labllm.wire` carries them: None for a
+    form without tools, empty for a final answer. An empty `output` with no tool calls is a
+    failed attempt, paid for and tried again.
     """
 
     output: Any
@@ -243,7 +244,7 @@ class Server:
                     again = retries.again(failure)
                 else:
                     self._ceilings.settle(call.meter, reserve, attempt.cost_usd)
-                    reply = wire.answer(form["route"], attempt.output, attempt.tool_calls)
+                    reply = wire.recorded_reply(form["route"], attempt.output, attempt.tool_calls)
                     if attempt.output or attempt.tool_calls:
                         self._record.finish(
                             row_id,

@@ -13,28 +13,30 @@ function, such as a query of its database, so only the caller can run it. Each s
 call whose request form holds the agent's messages so far. A rerun replays every step free
 while each tool gives the same result again; a changed result misses the cache from that
 step on. Running the loop in the gateway was turned down: the gateway would have to call
-back into the caller. The cost: each step sends the whole conversation again, and its input
-is paid each time.
+back into the caller. The cost: each step sends all the agent's messages again, and their
+input is paid each time.
 
 **Tools and tool calls travel in OpenAI's chat format.** A form with tools gains `tools`,
 each `{"name", "description", "parameters"}`, after `schema`; a form without tools keeps its
 key. A step that asked for tools adds an assistant message with `tool_calls`, then one
-`tool` message per result. A reply carries the calls as `tool_calls`, with the provider's
-ids and argument text unchanged, and the record keeps them beside the text. The cost:
-renaming or reshaping any of these changes the key of every agent step.
+`tool` message per result. A reply to a form with tools carries the calls as `tool_calls`,
+empty for the final answer, with the provider's ids and argument text unchanged, and the
+record keeps them beside the text. The cost: renaming or reshaping any of these changes the
+key of every agent step.
 
 **Only DeepSeek gets tools.** The caller's tools go to DeepSeek as strict functions beside
-the schema's `answer`, with thinking off, and the model must call one of them, as in
-[0012](0012-where-a-providers-requirement-is-met.md). A call to `answer` ends the agent. The
-gateway refuses tools for any other provider before a paid call. The cost: another provider
-waits for its own mapping and test.
+the schema's `answer`, with thinking off; with a schema, the model must call one of them, as
+in [0012](0012-where-a-providers-requirement-is-met.md). A call to `answer` ends the agent,
+so no tool may take that name. The gateway refuses tools for any other provider before a paid
+call. The cost: another provider waits for its own mapping and test.
 
 ## Consequences
 
 - The fake gateway plays a model asking for tools when its provider function returns
   `ToolCall`s, and numbers their ids itself.
 - A gateway older than tools sends the form without them, and caches that answer under the
-  form's key. Agents wait for the upgraded gateway.
+  form's key. Its reply has no `tool_calls`, so the agent raises `GatewayUnreachable` on that
+  step and on every replay of it. Agents wait for the upgraded gateway.
 - The ceiling counts the tools' definitions as input.
 - `StepLimitReached` and `UnknownTool` end only their agent. Neither is a `Stopped`, so a
   pass goes on.

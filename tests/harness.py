@@ -5,7 +5,8 @@ function that plays the provider, and reads the record, so another gateway joins
 by adding a factory to `HARNESSES` in `conftest.py`.
 
 A harness must apply the fake's token rule to whatever the provider function returns: one
-output token per character of the reply text, or of Jev's answers as JSON.
+output token per character of the reply text, of each tool call's name and arguments, or of
+Jev's answers as JSON.
 """
 
 from collections.abc import Callable, Iterator, Mapping

@@ -10,8 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from harness import CHAT, HOUR, MONDAY, PEAK, PRICES
-from labllm import Gateway, GatewayUnreachable, ProviderExhausted
+from harness import AGENT, CHAT, HOUR, MONDAY, PEAK, PRICES
+from labllm import Gateway, GatewayUnreachable, ProviderExhausted, Tool
 from labllm.testing import FakeClock, FakeGateway
 
 
@@ -113,6 +113,19 @@ def test_an_answer_no_client_understands_stops_the_caller() -> None:
     gw = Gateway(repo="tests", transport=Garbled())
     with gw.meter("garbled", ceiling_usd=1.0) as m, pytest.raises(GatewayUnreachable):
         m.chat(CHAT, user="hello")
+
+
+def test_an_agent_answered_by_a_gateway_older_than_agents_stops_the_caller() -> None:
+    # An older gateway drops the tools, so its reply carries no `tool_calls` at all.
+    older: dict[str, object] = {"text": '{"n": 1}', "usage": {}, "cost_usd": 0.01}
+    older |= {"first_cost_usd": 0.01, "cached": False}
+    tool = Tool("lookup", "Find a company.", {"type": "object"}, lambda arguments: "Acme")
+    gw = Gateway(repo="tests", transport=Answering(200, older))
+    with (
+        gw.meter("old", ceiling_usd=1.0) as m,
+        pytest.raises(GatewayUnreachable, match="older than agents"),
+    ):
+        m.agent(AGENT, user="Who is Acme?", tools=[tool], max_steps=2)
 
 
 def test_without_an_address_the_gateway_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:

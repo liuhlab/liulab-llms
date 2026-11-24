@@ -266,15 +266,10 @@ class FakeGateway:
                 except BaseException:
                     self._ceilings.settle(meter, reserve, 0.0)
                     raise
-                chat = form["route"] == "chat"
-                calls = _tool_calls(form, out) if chat and isinstance(out, list) else None
-                if calls is not None:
-                    out = ""
-                output_tokens = (
-                    len(out) + sum(len(c["name"]) + len(c["arguments"]) for c in calls or [])
-                    if chat
-                    else len(json.dumps(out))
-                )
+                if form["route"] == "chat":
+                    out, calls, output_tokens = _played_chat(form, out)
+                else:
+                    calls, output_tokens = None, len(json.dumps(out))
                 usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
                 cost = (
                     input_tokens * price.input_usd_per_token
@@ -290,7 +285,7 @@ class FakeGateway:
                     if empty is not None:
                         self._log(call, key, form=form, error=empty.reason, cost_usd=cost)
                     else:
-                        reply = wire.answer(form["route"], out, calls)
+                        reply = wire.recorded_reply(form["route"], out, calls)
                         self._cache.setdefault(key, (reply, usage, cost))
                         self._log(call, key, form=form, reply=reply, cost_usd=cost)
                 if empty is not None:
@@ -347,14 +342,24 @@ def _input_tokens(form: dict[str, Any]) -> int:
     return len(form["description"]) + len(json.dumps(form["questions"]))
 
 
-def _tool_calls(form: dict[str, Any], calls: list[ToolCall]) -> list[dict[str, Any]]:
-    """Return played tool calls as a reply carries them, numbered on from the form's own."""
-    before = sum(len(m.get("tool_calls") or ()) for m in form["messages"])
-    return [
-        {
-            "id": f"call_{before + i}",
-            "name": c.name,
-            "arguments": json.dumps(c.arguments, ensure_ascii=False),
-        }
-        for i, c in enumerate(calls)
-    ]
+def _played_chat(
+    form: dict[str, Any], out: str | list[ToolCall]
+) -> tuple[str, list[dict[str, Any]] | None, int]:
+    """Return a played chat reply's text, its tool calls and its output tokens.
+
+    The tool calls are as a reply carries them, numbered on from the form's own: None for a
+    form without tools, and empty for a final answer.
+    """
+    calls: list[dict[str, Any]] | None = [] if form.get("tools") else None
+    if isinstance(out, list):
+        before = sum(len(m.get("tool_calls") or ()) for m in form["messages"])
+        calls = [
+            {
+                "id": f"call_{before + i}",
+                "name": c.name,
+                "arguments": json.dumps(c.arguments, ensure_ascii=False),
+            }
+            for i, c in enumerate(out)
+        ]
+        out = ""
+    return out, calls, len(out) + sum(len(c["name"]) + len(c["arguments"]) for c in calls or [])

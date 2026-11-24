@@ -359,8 +359,13 @@ class Meter:
             The model still asked for tools at step `max_steps`.
         UnknownTool
             The model asked for a tool not in `tools`.
+        GatewayUnreachable
+            A gateway older than agents answered a step, now or earlier from its record.
         ValueError
-            `max_steps` is not a whole number from 1, or two tools share a name.
+            `max_steps` is not a whole number from 1, two tools share a name, or the model's
+            arguments for a tool are not JSON.
+        TypeError
+            A tool's `run` returned something that is neither a string nor JSON.
 
         Every error `chat` raises, and any error a tool's `run` raises, comes out unchanged,
         and the agent ends there.
@@ -382,6 +387,11 @@ class Meter:
             r = self._call({**form, "messages": list(messages)}, tag)
             cost += float(r["cost_usd"])
             calls = r.get("tool_calls")
+            if calls is None and definitions:
+                raise GatewayUnreachable(
+                    "the gateway's reply lacks tool_calls: a gateway older than agents answered "
+                    "this step without its tools"
+                )
             if not calls:
                 return AgentReply(r["text"], step, cost)
             unknown = [c["name"] for c in calls if c["name"] not in by_name]
@@ -394,25 +404,13 @@ class Meter:
                     f"the agent reached its limit of {max_steps} steps, and the model still "
                     f"asked for tools: {', '.join(c['name'] for c in calls)}"
                 )
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": r["text"] or None,
-                    "tool_calls": [
-                        {
-                            "id": c["id"],
-                            "type": "function",
-                            "function": {"name": c["name"], "arguments": c["arguments"]},
-                        }
-                        for c in calls
-                    ],
-                }
-            )
+            results = []
             for c in calls:
                 result = by_name[c["name"]].run(json.loads(c["arguments"] or "{}"))
-                if not isinstance(result, str):
-                    result = json.dumps(result, ensure_ascii=False)
-                messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                results.append(
+                    result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+                )
+            messages += wire.tool_turn(r["text"], calls, results)
 
     def jev(
         self,

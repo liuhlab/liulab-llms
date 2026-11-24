@@ -14,6 +14,10 @@ def test_a_text_form_counts_one_input_token_per_byte() -> None:
     form = wire.chat_form(model, user="héllo", system=None, schema=None)
     # [[{"role":"user","content":"héllo"}],null] is 43 bytes: é takes two.
     assert largest_cost(Price(1.0, 10.0), form) == 43 + 100 * 10.0
+    tool = {"name": "f", "description": "", "parameters": {}}
+    form = wire.chat_form(model, user="héllo", system=None, schema=None, tools=[tool])
+    # An agent's tools count too: ,[{"name":"f","description":"","parameters":{}}] adds 48.
+    assert largest_cost(Price(1.0, 10.0), form) == 43 + 48 + 100 * 10.0
 
 
 def test_an_image_counts_its_providers_bound_inline_or_by_url() -> None:
