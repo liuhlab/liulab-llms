@@ -25,7 +25,7 @@ from litellm.llms.custom_httpx.http_handler import HTTPHandler
 from litellm.types.utils import ChatCompletionMessageToolCall, Function
 
 from gateway_harness import database, empty, read_record, running, stand_in
-from harness import CHAT, HOUR, MONDAY, PEAK, PRICES
+from harness import CHAT, HOUR, MONDAY, PEAK, PRICES, blank_pdf
 from labllm import (
     CeilingReached,
     ChatReply,
@@ -894,14 +894,16 @@ def test_claudes_raw_usage_and_response_are_recorded_and_returned(conninfo: str)
 def test_a_pdf_is_uploaded_once_for_deepseek_to_parse_and_sent_by_its_file_id(
     conninfo: str,
 ) -> None:
-    pdf = b"%PDF-1.4\n%%EOF\n"
+    pdf = blank_pdf(2)
     uploads: list[bytes] = []
     chats: list[dict[str, Any]] = []
 
     def api(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/files":
             uploads.append(request.read())
-            return httpx.Response(200, json={"id": "file-api-1", "object": "file", "bytes": 15})
+            return httpx.Response(
+                200, json={"id": "file-api-1", "object": "file", "bytes": len(pdf)}
+            )
         chats.append(json.loads(request.read()))
         if len(chats) == 1:
             return httpx.Response(400, json={"error": {"message": "the context is too long"}})
@@ -936,8 +938,8 @@ def test_a_pdf_is_uploaded_once_for_deepseek_to_parse_and_sent_by_its_file_id(
         [{"type": "text", "text": "List the vendors."}, {"type": "file", "file_id": "file-api-1"}],
     ]
     assert reply.text == "OK"
-    # The call that uploaded pays for parsing, at its bound, though DeepSeek refused its chat.
-    assert refused.value.cost_usd == pytest.approx(1000 * 0.225 / 1000)
+    # The call that uploaded pays to parse the PDF's two pages, though DeepSeek refused its chat.
+    assert refused.value.cost_usd == pytest.approx(2 * 0.225 / 1000)
     assert reply.cost_usd < 0.001
     # The record keeps the file's digest, not its bytes; the cache key still covers the bytes.
     with psycopg.connect(conninfo) as conn:

@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from harness import AGENT, CHAT, HOUR, JEV, MONDAY, PEAK, VISION, Harness
+from harness import AGENT, CHAT, HOUR, JEV, MONDAY, PEAK, VISION, Harness, blank_pdf
 from labllm import (
     AgentReply,
     CeilingReached,
@@ -32,7 +32,7 @@ from labllm import (
 from labllm.peak import MARGIN_S
 from labllm.testing import ToolCall
 
-#: A PDF's header and trailer alone; the provider is played, so nothing parses it.
+#: A PDF's header and trailer alone, which no reader opens, so it counts as DeepSeek's bound.
 PDF = b"%PDF-1.4\n%%EOF\n"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
 #: Jev's questions, by name, as its API takes them.
@@ -145,13 +145,27 @@ def test_a_file_counts_as_the_most_deepseek_can_bill_for_it(harness: Harness) ->
 
     harness.provider(provider)
     content = [{"type": "text", "text": "Read this price list."}, files.file_part("p.pdf", PDF)]
-    # The reservation is DeepSeek's whole context, 1,000 pages of parsing and the output
-    # allowance, however small the file: between these two ceilings.
+    # The reservation is DeepSeek's whole context, 1,000 pages of parsing for a PDF no reader
+    # opens, and the output allowance: between these two ceilings.
     with harness.client().meter("too small", ceiling_usd=0.5) as m, pytest.raises(CeilingReached):
         m.chat(VISION, user=content)
     with harness.client().meter("enough", ceiling_usd=0.6) as m:
         assert m.chat(VISION, user=content).text == "abc"
     assert seen == [content]
+
+
+def test_a_pdf_counts_its_pages_and_a_word_file_its_bound(harness: Harness) -> None:
+    harness.provider(lambda form: "abc")
+
+    def ask(name: str, data: bytes) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": "Read this."}, files.file_part(name, data)]
+
+    # DeepSeek's whole context and the output allowance hold about 0.315 USD; 1,000 pages of
+    # parsing would add 0.225 more, and two pages add 0.00045.
+    with harness.client().meter("two pages", ceiling_usd=0.4) as m:
+        assert m.chat(VISION, user=ask("p.pdf", blank_pdf(2))).text == "abc"
+    with harness.client().meter("word", ceiling_usd=0.4) as m, pytest.raises(CeilingReached):
+        m.chat(VISION, user=ask("p.docx", blank_pdf(2)))
 
 
 def test_a_repeated_request_replays_from_the_cache_for_free(harness: Harness) -> None:

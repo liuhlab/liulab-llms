@@ -13,19 +13,22 @@ uploads as `user_data`, free, at most 32 MiB. A chat message then names the file
 `file_id`. [Its price page](https://api-docs.deepseek.com/quick_start/pricing) charges 0.225
 USD per 1,000 pages. Its upload reply carries no page count.
 
+**A PDF counts at its pages,** as pypdf counts them. Word, PowerPoint, and a PDF pypdf cannot
+open count at 1,000 pages: their pages are known only once rendered. The cost: pypdf joins
+the `gateway` extra, and without it the fake counts every PDF at 1,000.
+
 **The request form carries the file inline,** as OpenAI's file block with a base64 data URL,
 so the cache key covers the file's bytes. The gateway uploads it and swaps in the `file_id`.
 The record keeps each file as its name and SHA-256, so a tool loop that resends a file does
 not store it again. The cost: the client sends the whole file on every call.
 
 **The ceiling counts a form with a file at its provider's context length,** 1,048,576 tokens
-for DeepSeek, plus 1,000 pages of parsing for each document. A file's text has no smaller
-bound before parsing.
+for DeepSeek, plus each document's parsing. A file's text has no smaller bound before
+parsing.
 
-**Parsing is paid at its bound, once, by the attempt that uploads.** The gateway reuses an
-upload of the same bytes for most of a day. The attempt that uploads pays 1,000 pages, even
-when its chat then fails. The cost: the record overstates a short document's parsing, and
-its meter shrinks by that much.
+**Parsing is paid once, by the attempt that uploads,** even when its chat then fails. An
+upload of the same bytes is reused for most of a day. The cost: the record overstates a short Word file's
+parsing, and its meter shrinks by that much.
 
 **Text recognition only.** The richer purpose adds figures as images, which count against
 DeepSeek's image limit. The cost: a price shown only in a picture is not read.
