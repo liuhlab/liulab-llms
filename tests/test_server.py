@@ -34,6 +34,7 @@ from labllm import (
     ProviderExhausted,
     ProviderUnavailable,
     Rejected,
+    files,
     wire,
 )
 from labllm.client import HttpTransport
@@ -824,6 +825,62 @@ def test_claudes_raw_usage_and_response_are_recorded_and_returned(conninfo: str)
     with psycopg.connect(conninfo) as conn:
         row = conn.execute("SELECT usage, response FROM exchanges").fetchone()
     assert row == (usage, body)
+
+
+@pytest.mark.usefixtures("provider_keys")
+def test_a_pdf_is_uploaded_once_for_deepseek_to_parse_and_sent_by_its_file_id(
+    conninfo: str,
+) -> None:
+    pdf = b"%PDF-1.4\n%%EOF\n"
+    uploads: list[bytes] = []
+    chats: list[dict[str, Any]] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/files":
+            uploads.append(request.read())
+            return httpx.Response(200, json={"id": "file-api-1", "object": "file", "bytes": 15})
+        chats.append(json.loads(request.read()))
+        return httpx.Response(200, json=DEEPSEEK_REPLY)
+
+    http = httpx.Client(transport=httpx.MockTransport(api))
+    deepseek = openai.OpenAI(
+        api_key="test-key", base_url="https://api.deepseek.com", http_client=http
+    )
+    chat = LiteLLMChat(
+        Prices(),
+        completion=functools.partial(litellm().completion, client=HTTPHandler(client=http)),
+        files=deepseek,
+    )
+    model = Model("deepseek", DEEPSEEK, max_output_tokens=16)
+    block = files.file_part("prices.pdf", pdf)
+    with gateway(conninfo, {"chat": chat}, {}) as gw, gw.meter("pdf", ceiling_usd=5.0) as m:
+        first = m.chat(model, user=[{"type": "text", "text": "List the prices."}, block])
+        second = m.chat(model, user=[{"type": "text", "text": "List the vendors."}, block])
+    (upload,) = uploads
+    # DeepSeek reads the form's fields in order and refuses a document whose purpose comes late.
+    assert upload.index(b'name="purpose"') < upload.index(b'name="file"')
+    assert b"\r\n\r\ntext_recognition\r\n" in upload
+    assert pdf in upload
+    assert [c["messages"][0]["content"] for c in chats] == [
+        [{"type": "text", "text": "List the prices."}, {"type": "file", "file_id": "file-api-1"}],
+        [{"type": "text", "text": "List the vendors."}, {"type": "file", "file_id": "file-api-1"}],
+    ]
+    assert (first.text, second.text) == ("OK", "OK")
+    # Parsing is paid once, at its bound: DeepSeek reports no page count.
+    assert first.cost_usd - second.cost_usd == pytest.approx(1000 * 0.225 / 1000)
+
+
+#: A DeepSeek chat reply as its API sends one.
+DEEPSEEK_REPLY = {
+    "id": "c1",
+    "object": "chat.completion",
+    "created": 1,
+    "model": DEEPSEEK,
+    "choices": [
+        {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "OK"}}
+    ],
+    "usage": {"prompt_tokens": 50, "completion_tokens": 1, "total_tokens": 51},
+}
 
 
 #: Jev's questions, by name, as its API takes them.
