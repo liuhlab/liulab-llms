@@ -108,7 +108,7 @@ Check both halves with the key: the tunnel answers, and `ssh tunnel@<gateway-ip>
 
 ## Restore from the nightly dump
 
-Live once anyone is served. The dump is the sure copy. Restore it into a new database, compare
+Live once anyone is served. The dumps are the gateway's only backup. Restore it into a new database, compare
 it with `sudo labllm-db psql -d labllm_restored`, then quit that session and swap the names.
 The swap renames both or neither; an open session on either database makes it fail:
 
@@ -143,7 +143,8 @@ against the pin.
 
 ## Upgrade
 
-1. Snapshot the data disk ([gcp.md](gcp.md)).
+1. Take a fresh dump: `ssh llm-gateway sudo systemctl start labllm-dump.service`. It returns
+   once the dump is in the bucket, and fails if it is not.
 2. `ssh llm-gateway df -h /mnt/data`: past half full, grow the disk ([gcp.md](gcp.md)).
 3. Move `GATEWAY_TAG` in the task file to the new release tag.
 4. Rerun the launch. It restarts both services; a call sent meanwhile waits and completes,
