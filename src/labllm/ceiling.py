@@ -13,6 +13,9 @@ from labllm.model import Price
 #: from its own documentation; `docs/adr/0015-an-image-counts-as-its-providers-bound.md` cites it.
 IMAGE_TOKENS = {"anthropic": 4784, "deepseek": 1024, "openai": 73800}
 
+#: The content parts the ceiling can bound. A chat form with any other part is refused.
+PART_TYPES = ("text", "image_url", "file")
+
 
 def input_bytes(form: dict[str, Any]) -> int:
     """Return the UTF-8 bytes of a form's input as JSON, leaving out its images and files.
@@ -56,8 +59,10 @@ def largest_cost(price: Price, form: dict[str, Any]) -> float:
     Raises
     ------
     Rejected
-        As `image_tokens` or `labllm.files.attached` does.
+        The form has a content part whose type is not in `PART_TYPES`, or as `image_tokens`
+        or `labllm.files.attached` does.
     """
+    _check_parts(form)
     attached = files.attached(form)
     input_tokens = input_bytes(form) + image_tokens(form)
     if attached:
@@ -74,6 +79,16 @@ def _parts(form: dict[str, Any]) -> list[Any]:
     if form["route"] != "chat":
         return []
     return [part for m in form["messages"] for part in _content_parts(m)]
+
+
+def _check_parts(form: dict[str, Any]) -> None:
+    for part in _parts(form):
+        kind = part.get("type") if isinstance(part, dict) else type(part).__name__
+        if kind not in PART_TYPES:
+            raise Rejected(
+                f"the gateway cannot bound what a {kind!r} content part costs: "
+                f"give only {', '.join(PART_TYPES)}"
+            )
 
 
 def _content_parts(message: Any) -> list[Any]:
