@@ -212,28 +212,31 @@ def test_deleting_the_state_file_and_rerunning_keeps_every_review(
         assert t.review_queue(CHECKED) == []
 
 
-#: Once a line comes in, saves 20 long reviews as the person named, into the folder given.
+#: The savers, each one's saves, and the words in each answer: a line longer than one write.
+PEOPLE, SAVES, WORDS = 12, 4, 500
+
+#: Once a line comes in, saves the given number of long reviews as the person named.
 SAVER = """
 import sys
 from labllm import Inputs, Reviews, UnitKind
 
 k = UnitKind("split", "1", {}, lambda key: Inputs(key, key), lambda u: None, {})
-reviews, who = Reviews(sys.argv[1]), sys.argv[2]
+reviews, who, saves, words = Reviews(sys.argv[1]), sys.argv[2], *map(int, sys.argv[3:])
 print("ready", flush=True)
 sys.stdin.readline()
-for i in range(20):
+for i in range(saves):
     key = f"{who}{i}"
-    reviews.save(k, key, who=who, answer={"words": [who * 10] * 2000}, inputs_tag=key)
+    reviews.save(k, key, who=who, answer={"words": [who * 10] * words}, inputs_tag=key)
 """
 
 
 def test_processes_saving_at_once_never_split_a_line(tmp_path: Path) -> None:
-    people = ["ana", "ben", "cai", "dev"]
+    people = [f"p{n}" for n in range(PEOPLE)]
     with contextlib.ExitStack() as stack:
         savers = [
             stack.enter_context(
                 subprocess.Popen(
-                    [sys.executable, "-c", SAVER, str(tmp_path), who],
+                    [sys.executable, "-c", SAVER, str(tmp_path), who, str(SAVES), str(WORDS)],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     text=True,
@@ -247,10 +250,10 @@ def test_processes_saving_at_once_never_split_a_line(tmp_path: Path) -> None:
         for p in savers:
             assert p.stdin is not None
             p.stdin.close()
-        assert [p.wait() for p in savers] == [0, 0, 0, 0]
+        assert [p.wait() for p in savers] == [0] * len(people)
     reviews = Reviews(tmp_path).read(kind())
-    assert sorted(r.key for r in reviews) == sorted(f"{w}{i}" for w in people for i in range(20))
-    assert all(r.answer == {"words": [r.who * 10] * 2000} for r in reviews)
+    assert sorted(r.key for r in reviews) == sorted(f"{w}{i}" for w in people for i in range(SAVES))
+    assert all(r.answer == {"words": [r.who * 10] * WORDS} for r in reviews)
 
 
 def test_a_line_cut_short_by_a_crash_is_skipped(task: Task) -> None:
