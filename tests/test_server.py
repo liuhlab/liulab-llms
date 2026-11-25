@@ -24,7 +24,7 @@ import pytest
 from litellm.llms.custom_httpx.http_handler import HTTPHandler
 from litellm.types.utils import ChatCompletionMessageToolCall, Function
 
-from gateway_harness import database, empty, read_record, running, stand_in
+from gateway_harness import read_record, running, stand_in
 from harness import CHAT, HOUR, MONDAY, PEAK, PRICES, blank_pdf
 from labllm import (
     CeilingReached,
@@ -53,13 +53,6 @@ from labllm.testing import FakeClock, Price
 
 DEEPSEEK = "deepseek-v4-flash"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
-
-
-@pytest.fixture
-def conninfo() -> str:
-    db = database()
-    empty(db)
-    return db
 
 
 @contextmanager
