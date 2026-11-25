@@ -17,8 +17,9 @@ uploaded at different moments never form a database that opens. Each change uplo
 whole file again, and Google says Cloud Storage FUSE "shouldn't be used as the backend for
 storing a database." The cost: the disk bounds the record, and a full disk is grown by hand.
 
-**A disaster may lose up to a day.** The newest copy off the disk is the last nightly dump,
-and a daily snapshot of the disk is the fast restore. Shipping PostgreSQL's write-ahead log
+**A disaster may lose up to a day.** The nightly dump is the one backup, and the newest copy
+off the disk is the last one. Disk snapshots would be a second backup to schedule, pay for
+and restore from, holding nothing newer. Shipping PostgreSQL's write-ahead log
 to the bucket would cut the loss to minutes, at the price of a file per log segment, a
 restore that replays them and a drill of its own. A lost day's calls are paid again when
 rerun, and their exchanges are gone.
@@ -32,3 +33,5 @@ rerun, and their exchanges are gone.
   is chunk files of old records in the bucket, still read back on a cache hit.
 - Nothing promises that an old dump loads into a newer gateway. The schema only adds, so it
   should.
+- Lab members' tunnel keys sit on the data disk with no copy. After a disk loss, each member
+  sends their public key again.

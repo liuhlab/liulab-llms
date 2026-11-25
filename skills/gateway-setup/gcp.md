@@ -33,15 +33,11 @@ gcloud compute instances list --filter='name~^llm-gateway-' --format='value(name
    `~/.pixi/envs/skypilot/lib/python3.*/site-packages/sky/provision/gcp/constants.py`,
    comment out `'roles/iam.roleViewer',` in `DEFAULT_SERVICE_ACCOUNT_ROLES`. `pixi global
    update` overwrites it: reapply it after every update.
-5. **The data disk, its snapshot schedule and the backup bucket.** The disk exists before
-   the launch, so SkyPilot attaches it rather than creating one at its costliest tier.
+5. **The data disk and the backup bucket.** The disk exists before the launch, so SkyPilot
+   attaches it rather than creating one at its costliest tier.
 
    ```bash
    gcloud compute disks create llm-gateway-data --zone=<zone> --size=20GB --type=pd-balanced
-   gcloud compute resource-policies create snapshot-schedule llm-gateway-daily --region=<region> \
-     --daily-schedule --start-time=09:00 --max-retention-days=14 \
-     --on-source-disk-delete=keep-auto-snapshots --storage-location=<region>
-   gcloud compute disks add-resource-policies llm-gateway-data --zone=<zone> --resource-policies=llm-gateway-daily
    gcloud storage buckets create gs://<bucket> --location=<region> --uniform-bucket-level-access --public-access-prevention \
      --enable-autoclass --autoclass-terminal-storage-class=ARCHIVE
    gcloud storage buckets update gs://<bucket> --lifecycle-file=backup-lifecycle.json
@@ -114,42 +110,7 @@ gcloud compute disks resize llm-gateway-data --zone=<zone> --size=<GB>
 ssh llm-gateway 'sudo resize2fs /dev/disk/by-id/google-sky-disk-0 && df -h /mnt/data'
 ```
 
-## Snapshot before an upgrade
-
-A snapshot name takes only lowercase letters, digits and dashes, so write the tag's dots as
-dashes: `v2026-11-1`.
-
-```bash
-gcloud compute snapshots create llm-gateway-before-<tag> --source-disk=llm-gateway-data --source-disk-zone=<zone>
-```
-
-## Restore from a snapshot
-
-Use the dump ([SKILL.md](SKILL.md)) first; a snapshot is the whole disk. To look inside one
-without touching the data disk, make a disk from it, attach it with
-`--device-name=restore-test`, and mount `/dev/disk/by-id/google-restore-test`. Delete the
-copy's `pgdata/postmaster.pid`, which names the live server's process. Start a second server
-on it with the environment's `pg_ctl`, with `-o "-c listen_addresses= -c port=5433 -c
-unix_socket_directories=<dir>"`. Afterwards stop it, then detach and delete the copy.
-
-To restore, snapshot the disk as it is, then swap in a disk made from the chosen snapshot
-under the same name:
-
-```bash
-gcloud compute snapshots list --filter='sourceDisk~llm-gateway-data'
-ssh llm-gateway 'sudo systemctl stop labllm-gateway labllm-postgres && sudo umount /mnt/data'
-gcloud compute instances detach-disk <instance> --zone=<zone> --disk=llm-gateway-data
-gcloud compute disks delete llm-gateway-data --zone=<zone>
-gcloud compute disks create llm-gateway-data --zone=<zone> --type=pd-balanced --source-snapshot=<snapshot>
-gcloud compute disks add-resource-policies llm-gateway-data --zone=<zone> --resource-policies=llm-gateway-daily
-gcloud compute instances attach-disk <instance> --zone=<zone> --disk=llm-gateway-data --device-name=sky-disk-0
-ssh llm-gateway 'sudo mount /mnt/data && sudo systemctl start labllm-postgres labllm-gateway'
-```
-
-PostgreSQL replays its log on the restored copy at start, as after a crash.
-
 ## Teardown
 
-`sky down llm-gateway` deletes the VM and its boot disk, keys included. The data disk, its
-snapshots, the bucket and the fixed address stay, and are billed, until each is deleted with
-`gcloud`.
+`sky down llm-gateway` deletes the VM and its boot disk, keys included. The data disk, the
+bucket and the fixed address stay, and are billed, until each is deleted with `gcloud`.
