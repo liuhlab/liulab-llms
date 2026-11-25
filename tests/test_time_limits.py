@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 import time
 import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -137,3 +140,75 @@ def test_the_slow_lane_holds_a_slow_test_to_neither_limit(pytester: pytest.Pytes
     result.assert_outcomes(passed=1)
     assert result.ret == pytest.ExitCode.OK
     result.stdout.fnmatch_lines(["suite time: not checked, because slow tests ran"])
+
+
+#: How long the scratch tree's database takes to start.
+START_S = 0.4
+
+GATEWAY_TEST = """
+import pytest
+
+from gateway_harness import database
+
+
+@pytest.fixture
+def conninfo():
+    return database()
+
+
+def test_uses_the_database(conninfo):
+    assert conninfo == "stand-in"
+"""
+
+
+def gateway_scratch(
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    tests: str,
+    *,
+    timeout: float,
+    budget: float,
+) -> list[str]:
+    """`scratch` plus this repo's gateway test set-up, its database `START_S` slow to start.
+
+    Returns the list each start of the database appends to.
+    """
+    scratch(pytester, tests, timeout=timeout, budget=budget)
+    for name in ("conftest.py", "gateway_harness.py"):
+        source = (REPO / "tests" / name).read_text(encoding="utf-8")
+        (pytester.path / "tests" / name).write_text(source, encoding="utf-8")
+    starts: list[str] = []
+
+    @contextmanager
+    def slow_start() -> Iterator[str]:
+        starts.append("started")
+        time.sleep(START_S)
+        yield "stand-in"
+
+    # The scratch tree's own copy of the harness, so no database this session started is reused.
+    monkeypatch.delitem(sys.modules, "gateway_harness", raising=False)
+    monkeypatch.setattr("labllm.server.throwaway.throwaway_database", slow_start)
+    monkeypatch.setattr("labllm.server.prices.litellm", lambda: None)
+    return starts
+
+
+def test_the_gateway_tests_start_up_is_charged_to_the_suite_not_to_a_test(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A budget the run keeps without the start-up, and crosses only with it.
+    starts = gateway_scratch(pytester, monkeypatch, GATEWAY_TEST, timeout=0.1, budget=0.3)
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+    result.stdout.fnmatch_lines(["suite time: * s, over its 0.3 s budget*"])
+    assert starts == ["started"]
+
+
+def test_a_run_with_no_gateway_test_starts_no_database(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    starts = gateway_scratch(
+        pytester, monkeypatch, "def test_quick():\n    pass\n", timeout=1, budget=30
+    )
+    result = pytester.runpytest()
+    result.assert_outcomes(passed=1)
+    assert starts == []
