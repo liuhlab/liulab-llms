@@ -76,9 +76,10 @@ gcloud compute instances list --filter='name~^llm-gateway-' --format='value(name
 9. **Cut the access scopes** to Cloud Storage read and write, which the nightly dump needs:
    see "Cut the scopes".
 10. **Provider keys**, then "Check it works", both in [SKILL.md](SKILL.md).
-11. **Memory.** After the check's real call, run `ssh llm-gateway free -m`. If under a quarter
-    of the memory is available, or swap is in use at rest, set `instance_type: e2-medium` and
-    rebuild.
+11. **Memory.** After the check's real call, run `ssh llm-gateway free -m` and
+    `ssh llm-gateway cat /proc/pressure/memory`. If under a quarter of the memory is
+    available, or `some avg300` is above zero at rest, set `instance_type: e2-medium` and
+    rebuild. Swap held is not a reason: it keeps pages from a past peak after the pressure ends.
 
 ## Cut the scopes
 
