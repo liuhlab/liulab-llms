@@ -35,6 +35,8 @@ new provider wait for someone to read its rule and add one line.
 ## Consequences
 
 - The fake and the real gateway share the table through `largest_cost`.
+- The ceiling counts three kinds of content part, `text`, `image_url` and `file`, and
+  refuses a call with any other.
 - The rate-limit estimate counts each image at the same bound, and usage corrects it after.
 - A provider's new model with a larger image rule needs its bound raised before callers use
   it.

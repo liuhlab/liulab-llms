@@ -110,6 +110,36 @@ def test_an_image_for_a_provider_with_no_image_bound_is_rejected_unsent(
     assert provider.calls == 0
 
 
+ANTHROPIC = Model("anthropic", CHAT.name, max_output_tokens=10)
+PDF_URL = {"type": "url", "url": "https://example.org/quote.pdf"}
+PNG_URL = {"type": "url", "url": "https://example.org/a.png"}
+PNG_BASE64 = {"type": "base64", "media_type": "image/png", "data": "AA=="}
+WAV = {"data": "AA==", "format": "wav"}
+
+
+@pytest.mark.parametrize(
+    ("model", "part", "kind"),
+    [
+        (ANTHROPIC, {"type": "document", "source": PDF_URL}, "document"),
+        (ANTHROPIC, {"type": "image", "source": PNG_URL}, "image"),
+        (ANTHROPIC, {"type": "image", "source": PNG_BASE64}, "image"),
+        (CHAT, {"type": "input_audio", "input_audio": WAV}, "input_audio"),
+        (CHAT, "a bare string", "str"),
+    ],
+)
+def test_a_part_the_ceiling_cannot_bound_is_rejected_unsent(
+    harness: Harness, model: Model, part: Any, kind: str
+) -> None:
+    provider = Counting()
+    harness.provider(provider)
+    # The ceiling holds exactly one text call's output allowance.
+    with harness.client().meter("parts", ceiling_usd=0.1) as m:
+        with pytest.raises(Rejected, match=rf"{kind}.*text, image_url, file"):
+            m.chat(model, user=[{"type": "text", "text": "Read this."}, part])
+        assert (provider.calls, m.spent_usd) == (0, 0.0)
+        assert m.chat(model, user="Read this.").text == "abc"  # nothing is left held
+
+
 def file_block(filename: str, data: bytes) -> dict[str, Any]:
     """A file content block built by hand, so it can break the rules `files.file_part` keeps."""
     url = "data:application/octet-stream;base64," + base64.b64encode(data).decode()
