@@ -116,6 +116,10 @@ class TaskBusy(Exception):  # noqa: N818 - the name callers catch
     """A write in progress kept a read waiting past `READ_WAIT_S`. Try the read again."""
 
 
+class TaskNeedsRepair(Exception):  # noqa: N818 - the name callers catch
+    """A pass stopped in the middle of a write. Open the task once with `Task` to repair it."""
+
+
 class Holder:
     """A process's hold on a task: a holder file made only if absent, touched while held.
 
@@ -379,6 +383,8 @@ class StateFile:
         has an older layout.
     TaskBusy
         On a read-only open, a write in progress kept the open waiting past `READ_WAIT_S`.
+    TaskNeedsRepair
+        On a read-only open, a pass stopped in the middle of a write.
     """
 
     def __init__(self, path: Path, *, read_only: bool = False) -> None:
@@ -457,6 +463,8 @@ class StateFile:
         ------
         TaskBusy
             On a read-only open, a write in progress kept the read waiting too long.
+        TaskNeedsRepair
+            On a read-only open, a pass stopped in the middle of a write.
         """
         with self._lock:
             if not self.read_only or self._depth:
@@ -477,6 +485,11 @@ class StateFile:
             except sqlite3.OperationalError as e:
                 if e.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY:
                     raise TaskBusy(f"a write kept this read waiting {READ_WAIT_S:g} s") from e
+                if e.sqlite_errorcode == sqlite3.SQLITE_READONLY_ROLLBACK:
+                    raise TaskNeedsRepair(
+                        "a pass stopped in the middle of a write, and a read-only open cannot "
+                        "undo it; open the task once for writing, with Task, to repair it"
+                    ) from e
                 raise
             finally:
                 self._depth -= 1

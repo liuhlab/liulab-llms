@@ -765,6 +765,9 @@ class TaskReader(_Reads):
         layout: open the task once with `Task` to upgrade it.
     TaskBusy
         From the open or any read: a write kept it waiting too long. Try again.
+    TaskNeedsRepair
+        From the open or any read: a pass stopped in the middle of a write. Waiting does not
+        clear it; open the task once with `Task` to repair it.
     """
 
     def __init__(

@@ -75,6 +75,8 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.state.TaskBusy
 
+::: labllm.state.TaskNeedsRepair
+
 ::: labllm.state.UnknownLayout
 
 ::: labllm.state.PASS_ENDINGS
