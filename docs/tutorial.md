@@ -158,10 +158,11 @@ no `UnitKind`: each read takes the kind's name, such as `reader.passes("species"
 writes nothing and takes no hold, so it works while a pass in another process holds the task.
 Each read sees the state as one finished write left it.
 
-`TaskReader` refuses three things. A folder with no task raises `NoTask`, and nothing is
+`TaskReader` refuses four things. A folder with no task raises `NoTask`, and nothing is
 made. A state file from an older liulab-llms raises `UnknownLayout`: open it once with `Task`,
 which brings it up to date. A read that waits too long for a write raises `TaskBusy`; try it
-again. It cannot run a pass or save a review.
+again. A pass that stopped in the middle of a write raises `TaskNeedsRepair`: open the task
+once with `Task`, which repairs it. It cannot run a pass or save a review.
 
 ## 6. Run it on the lab's models
 

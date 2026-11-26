@@ -39,6 +39,7 @@ from labllm.state import (
     Stamp,
     TaskBusy,
     TaskInUse,
+    TaskNeedsRepair,
     UnitCost,
     UnknownLayout,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "Task",
     "TaskBusy",
     "TaskInUse",
+    "TaskNeedsRepair",
     "TaskReader",
     "Tool",
     "Unit",

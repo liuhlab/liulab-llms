@@ -36,6 +36,7 @@ from labllm import (
     Stopped,
     Task,
     TaskInUse,
+    TaskNeedsRepair,
     TaskReader,
     Unit,
     UnitKind,
@@ -1054,6 +1055,41 @@ def test_a_read_only_open_refuses_an_older_layout_and_leaves_it(
         TaskReader(state.parent)
     assert state.read_bytes() == before
     assert [p.name for p in state.parent.iterdir()] == ["state.sqlite"]
+
+
+#: Deletes every outcome inside a write transaction, says so, and waits to be killed. With
+#: no sync, SQLite writes the journal's header at once, so the journal it leaves is hot.
+WRITE_THEN_HANG = """
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1], isolation_level=None)
+db.execute("PRAGMA synchronous=OFF")
+db.execute("BEGIN IMMEDIATE")
+db.execute("DELETE FROM outcomes")
+print("writing", flush=True)
+sys.stdin.readline()
+"""
+
+
+def test_a_read_only_open_after_a_killed_write_is_refused_until_a_writing_open(
+    tmp_path: Path, fake: FakeGateway
+) -> None:
+    with open_task(tmp_path, fake) as t:
+        run(t, kind(), ["a"])
+    folder = tmp_path / "task"
+    args = [sys.executable, "-c", WRITE_THEN_HANG, str(folder / "state.sqlite")]
+    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as p:
+        assert p.stdout is not None
+        assert p.stdout.readline() == "writing\n"
+        p.kill()
+    before = {f.name: f.read_bytes() for f in folder.iterdir()}
+    assert "state.sqlite-journal" in before
+    with pytest.raises(TaskNeedsRepair, match=r"stopped in the middle of a write.* with Task"):
+        TaskReader(folder)
+    assert {f.name: f.read_bytes() for f in folder.iterdir()} == before
+    open_task(tmp_path, fake).close()
+    with TaskReader(folder) as r:
+        (outcome,) = r.outcomes("split", "a")
+    assert outcome.ending == "settled"
 
 
 #: Runs a pass over units a to d, two at once, and after each unit's outcome is recorded,
