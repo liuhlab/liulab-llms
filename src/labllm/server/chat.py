@@ -12,7 +12,7 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
-from labllm import files
+from labllm import files, wire
 from labllm.errors import ProviderExhausted, ProviderUnavailable, Rejected
 from labllm.retry import unreadable
 from labllm.server.app import Attempt, retry_after_s
@@ -204,17 +204,11 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
     Raises
     ------
     Rejected
-        The form names the Jev provider, `thinking` for a provider other than DeepSeek, tools
-        for one, or a tool named `answer` beside a schema.
+        As `labllm.wire.check_chat`.
     """
+    wire.check_chat(form)
     provider, settings, schema = form["provider"], form["settings"], form.get("schema")
     tools = form.get("tools") or []
-    if provider == "typesafe":
-        raise Rejected("Jev calls take the jev route")
-    if tools and provider != "deepseek":
-        raise Rejected(f"the gateway sends an agent's tools to DeepSeek only, not {provider}")
-    if schema is not None and any(tool["name"] == "answer" for tool in tools):
-        raise Rejected("an agent's tool may not be named answer: the schema's function is")
     kwargs: dict[str, Any] = {
         "model": f"{provider}/{form['model']}",
         "messages": _messages(form),
@@ -227,8 +221,6 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
         if schema is not None:
             functions.append({"name": "answer", "parameters": schema, "strict": True})
         if functions:
-            if settings["thinking"] is True:
-                raise Rejected("DeepSeek strict function calls need thinking off")
             kwargs["thinking"] = {"type": "disabled"}
             kwargs["_skip_mcp_handler"] = True
             kwargs["tools"] = [{"type": "function", "function": f} for f in functions]
@@ -240,8 +232,6 @@ def request(form: dict[str, Any]) -> dict[str, Any]:
             kwargs["thinking"] = {"type": "enabled" if settings["thinking"] else "disabled"}
         if settings["effort"] is not None:
             kwargs["extra_body"] = {"reasoning_effort": settings["effort"]}
-    if provider != "deepseek" and settings["thinking"] is not None:
-        raise Rejected(f"thinking is a DeepSeek setting; for {provider}, set effort instead")
     if provider != "deepseek" and settings["effort"] is not None:
         kwargs["reasoning_effort"] = settings["effort"]
     if provider != "deepseek" and schema is not None:
