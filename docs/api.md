@@ -19,6 +19,10 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.client.ChatReply
 
+::: labllm.replies.reply_json
+
+::: labllm.replies.ReplyNotJson
+
 ::: labllm.client.JevReply
 
 ::: labllm.client.Tool
