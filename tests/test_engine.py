@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from labllm import (
     Role,
     Stopped,
     Task,
+    TaskHolder,
     TaskInUse,
     TaskNeedsRepair,
     TaskReader,
@@ -42,6 +44,7 @@ from labllm import (
     UnitKind,
     UnknownLayout,
 )
+from labllm.state import STALE_S
 from labllm.testing import FakeClock, FakeGateway, OffPeak, Price
 
 WRITER = Model("openai", "test-writer", max_output_tokens=50)
@@ -615,6 +618,62 @@ def test_a_holder_that_stopped_beating_is_taken_over_and_loses_its_hold(
         assert holder.stdout.readline().startswith(f"refused: {tmp_path / 'task'} is now held")
 
 
+def files(folder: Path) -> dict[str, tuple[bytes, int]]:
+    return {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in folder.iterdir()}
+
+
+def test_a_reader_names_the_holder_until_its_process_is_killed_and_changes_nothing(
+    holder: subprocess.Popen[str], tmp_path: Path
+) -> None:
+    folder = tmp_path / "task"
+    before = files(folder)
+    with TaskReader(folder) as r:
+        held = r.holder
+        holder.kill()
+        holder.wait()
+        assert r.holder is None
+    assert held is not None
+    assert (held.pid, held.host) == (holder.pid, socket.gethostname())
+    assert isinstance(held.since, datetime)
+    assert "state.holder" in before
+    assert files(folder) == before
+
+
+SINCE = datetime(2026, 11, 26, 10, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("host", "age_s", "held"),
+    [
+        ("elsewhere", 0.0, True),
+        ("elsewhere", STALE_S + 1, False),
+        (socket.gethostname(), STALE_S + 1, False),
+        (None, 0.0, True),
+    ],
+    ids=["another host", "another host, untouched", "this host, untouched", "being written"],
+)
+def test_a_reader_sees_a_holder_exactly_when_a_writing_open_is_refused(
+    tmp_path: Path, fake: FakeGateway, host: str | None, age_s: float, held: bool
+) -> None:
+    """A file untouched past `STALE_S` is gone whatever host it names; `None` writes no fields."""
+    open_task(tmp_path, fake).close()
+    path = tmp_path / "task" / "state.holder"
+    who = {"user": "someone", "pid": os.getpid(), "host": host, "since": SINCE.isoformat()}
+    path.write_text("" if host is None else json.dumps(who))
+    then = time.time() - age_s
+    os.utime(path, (then, then))
+    with TaskReader(tmp_path / "task") as r:
+        seen = r.holder
+    if not held:
+        assert seen is None
+        open_task(tmp_path, fake).close()
+        return
+    nobody = TaskHolder(user=None, pid=None, host=None, since=None)
+    assert seen == (nobody if host is None else TaskHolder("someone", os.getpid(), host, SINCE))
+    with pytest.raises(TaskInUse):
+        open_task(tmp_path, fake)
+
+
 #: How long a test waits for threads to meet before it calls the engine broken.
 MEET_S = 10.0
 
@@ -1030,6 +1089,7 @@ def test_a_read_only_open_reads_by_name_with_no_gateway_and_changes_nothing(
         (p,) = r.passes("split")
         assert r.keys("split", endings=ENDINGS) == ["a", "b", "c"]
         assert r.review_queue("split") == []
+        assert r.holder is None
         assert sorted(p.name for p in folder.iterdir()) == sorted(before)
     assert current is not None
     assert (current.ending, current.reason) == ("dropped", "too long")

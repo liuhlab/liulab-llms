@@ -69,6 +69,8 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.state.Stamp
 
+::: labllm.state.TaskHolder
+
 ::: labllm.state.TaskInUse
 
 ::: labllm.state.NoTask
