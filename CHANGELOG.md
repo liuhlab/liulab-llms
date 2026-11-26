@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.9] - 2026-11-26
+
 ### Added
 
 - `TaskReader` opens a task only to read it: where each pass stands, and what each unit
@@ -15,6 +17,10 @@ sets one.
   task. A folder with no task raises `NoTask`, a state file in an older layout raises
   `UnknownLayout`, and a read kept waiting by a write raises `TaskBusy`. `Task`'s reads take
   the kind's name too.
+- `TaskReader` raises `TaskNeedsRepair`, from the open or any read, when a pass was killed in
+  the middle of a write. Waiting does not clear it, as it clears `TaskBusy`: open the task
+  once with `Task`, which repairs the file, then read again. `TaskNeedsRepair` is exported
+  from `labllm`.
 - `PASS_ENDINGS`, `ENDINGS` and `NOT_ENDINGS` are exported from `labllm`.
 - `reply_json` reads the JSON value out of the text of a chat reply sent with no schema, as a
   call to a DeepSeek model with thinking on must be. It reads the whole text as JSON, or else
@@ -29,6 +35,11 @@ sets one.
   that matters most: a DeepSeek call with thinking on and a schema or tools. A test of such a
   call now fails as the live call does, instead of passing. Both gateways share the check,
   `labllm.wire.check_chat`.
+- A chat call with a content part that is not `text`, `image_url` or `file`, such as an
+  Anthropic document sent by URL, is now refused before it is sent. The ceiling counted such
+  a part only at the bytes of its JSON, which can fall far short of what the provider bills.
+  The refusal arrives with an upgrade of the lab gateway; the fake gateway in
+  `labllm.testing` refuses it in this version.
 
 ## [2026.11.8] - 2026-11-24
 
