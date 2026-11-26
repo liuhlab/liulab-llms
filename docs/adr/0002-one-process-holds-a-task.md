@@ -32,3 +32,6 @@ frozen past the limit, then resumed, cannot write beside the process that took o
   closing the task wakes it at once.
 - Two openers that judge one dead holder gone at the same instant can both take over. The
   window is milliseconds after a crash, and is accepted.
+- A read-only open takes no hold and writes nothing. SQLite's own file locks keep each read
+  to committed state; a write waits for reads far longer than a read waits for a write, so a
+  reader never makes a pass fail.

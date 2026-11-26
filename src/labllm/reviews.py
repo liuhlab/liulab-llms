@@ -81,9 +81,9 @@ class Reviews:
         self._lock = threading.Lock()
         self._read: dict[Path, tuple[tuple[int, int, int], _Read]] = {}
 
-    def path(self, kind: "UnitKind") -> Path:
-        """Return the kind's review file."""
-        return self.folder / f"{kind.name}.jsonl"
+    def path(self, kind: "UnitKind | str") -> Path:
+        """Return the review file of the kind, given it or its name."""
+        return self.folder / f"{kind_name(kind)}.jsonl"
 
     def save(
         self,
@@ -160,7 +160,7 @@ class Reviews:
         _append(self.path(kind), _line(review))
         return review
 
-    def read(self, kind: "UnitKind") -> list[Review]:
+    def read(self, kind: "UnitKind | str") -> list[Review]:
         """Return the kind's reviews in file order.
 
         A line cut short at the end of the file, as a crash while saving leaves it, is
@@ -168,11 +168,11 @@ class Reviews:
         """
         return list(self._load(kind).reviews)
 
-    def by_unit(self, kind: "UnitKind") -> dict[str, tuple[Review, ...]]:
+    def by_unit(self, kind: "UnitKind | str") -> dict[str, tuple[Review, ...]]:
         """Return each unit's reviews, oldest first: by time, then by file order."""
         return self._load(kind).by_key
 
-    def _load(self, kind: "UnitKind") -> "_Read":
+    def _load(self, kind: "UnitKind | str") -> "_Read":
         """Read the kind's file again only if it has changed since the last read."""
         path = self.path(kind)
         try:
@@ -198,6 +198,11 @@ class Reviews:
 class _Read:
     reviews: tuple[Review, ...]
     by_key: dict[str, tuple[Review, ...]]
+
+
+def kind_name(kind: "UnitKind | str") -> str:
+    """Return the kind's name, given the kind or its name."""
+    return kind if isinstance(kind, str) else kind.name
 
 
 def holding(reviews: tuple[Review, ...], inputs_tag: str | None) -> Review | None:

@@ -18,12 +18,16 @@ import pytest
 import labllm
 from harness import DEEPSEEK_OFF_PEAK, HOUR, MONDAY
 from labllm import (
+    ENDINGS,
+    NOT_ENDINGS,
+    PASS_ENDINGS,
     CeilingReached,
     Gateway,
     GatewayUnreachable,
     Held,
     Inputs,
     Model,
+    NoTask,
     Pass,
     ProviderExhausted,
     ProviderUnavailable,
@@ -32,6 +36,7 @@ from labllm import (
     Stopped,
     Task,
     TaskInUse,
+    TaskReader,
     Unit,
     UnitKind,
     UnknownLayout,
@@ -994,3 +999,112 @@ def test_a_failed_calls_paid_attempts_count_in_the_unit_and_the_pass(tmp_path: P
     assert outcome.cost.spent_usd == pytest.approx(0.004)
     assert (result.stopped, result.requests) == ("provider_exhausted", 2)
     assert result.spent_usd == pytest.approx(0.004)
+
+
+@pytest.mark.parametrize("made", [False, True], ids=["no folder", "no state file"])
+def test_a_read_only_open_of_a_folder_with_no_task_is_refused_and_makes_nothing(
+    tmp_path: Path, made: bool
+) -> None:
+    folder = tmp_path / "task"
+    if made:
+        folder.mkdir()
+    with pytest.raises(NoTask, match="no task"):
+        TaskReader(folder)
+    assert [p.name for p in tmp_path.iterdir()] == (["task"] if made else [])
+    assert not made or list(folder.iterdir()) == []
+
+
+def test_a_read_only_open_reads_by_name_with_no_gateway_and_changes_nothing(
+    tmp_path: Path, fake: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with open_task(tmp_path, fake) as t:
+        run(t, kind(answer_checks=(at_most_two,)), list(TEXTS))
+        t.save_review(kind(), "c", who="me", drop=True, note="too long")
+    folder = tmp_path / "task"
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    monkeypatch.delenv("LABLLM_GATEWAY", raising=False)
+    with TaskReader(folder, reviews=tmp_path / "reviews") as r:
+        current = r.current("split", "c")
+        (outcome,) = r.outcomes("split", "a")
+        (p,) = r.passes("split")
+        assert r.keys("split", endings=ENDINGS) == ["a", "b", "c"]
+        assert r.review_queue("split") == []
+        assert sorted(p.name for p in folder.iterdir()) == sorted(before)
+    assert current is not None
+    assert (current.ending, current.reason) == ("dropped", "too long")
+    assert (outcome.ending, outcome.answer) == ("settled", {"words": ["red", "green"]})
+    assert (p.ended, p.counts["settled"], p.counts["unsettled"]) == (True, 2, 1)
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+    assert "state.holder" not in before
+    with TaskReader(folder) as r:  # with no reviews folder, no review counts
+        assert [e.key for e in r.review_queue("split")] == ["c"]
+
+
+@pytest.mark.parametrize("layout", [1, 2])
+def test_a_read_only_open_refuses_an_older_layout_and_leaves_it(
+    tmp_path: Path, layout: int
+) -> None:
+    state = tmp_path / "task" / "state.sqlite"
+    state.parent.mkdir()
+    with sqlite3.connect(state) as db:
+        db.executescript((Path(__file__).parent / "data" / f"layout-{layout}.sql").read_text())
+    db.close()
+    before = state.read_bytes()
+    with pytest.raises(UnknownLayout, match=f"layout {layout}, older .* once for writing"):
+        TaskReader(state.parent)
+    assert state.read_bytes() == before
+    assert [p.name for p in state.parent.iterdir()] == ["state.sqlite"]
+
+
+#: Runs a pass over units a to d, two at once, and after each unit's outcome is recorded,
+#: prints its key and waits for a line on stdin.
+PASS_IN_STEPS = """
+import json, sys
+from labllm import Inputs, Model, Role, Task, UnitKind
+from labllm.testing import FakeGateway, Price
+
+writer = Model("openai", "w", max_output_tokens=50)
+fake = FakeGateway(lambda form: '{"n": 1}', prices={"w": Price(0.0, 0.001)})
+k = UnitKind("k", "1", {"writer": Role("chat")}, lambda key: Inputs(key, key),
+             lambda u: json.loads(u.chat("writer", user=u.key).text), {})
+
+def heard(end):
+    print("ended", end.key, flush=True)
+    sys.stdin.readline()
+
+with Task(sys.argv[1], gateway=fake.client(), reviews=sys.argv[2]) as task:
+    result = task.run_pass(k, list("abcd"), models={"writer": writer}, ceiling_usd=1.0,
+                           label="held", units_at_once=2, on_end=heard)
+print("done", result.counts["settled"], result.stopped, flush=True)
+"""
+
+
+def test_a_read_only_open_reads_while_another_process_runs_a_pass(tmp_path: Path) -> None:
+    folder = tmp_path / "task"
+    args = [sys.executable, "-c", PASS_IN_STEPS, str(folder), str(tmp_path / "reviews")]
+    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as p:
+        assert p.stdin is not None
+        assert p.stdout is not None
+        try:
+            ended: list[str] = []
+            for _ in "abcd":
+                ended.append(p.stdout.readline().removeprefix("ended ").strip())
+                with TaskReader(folder) as r:
+                    (running,) = r.passes("k")
+                    latest = r.current("k", ended[-1])
+                    recorded = r.keys("k")
+                assert not running.ended
+                assert set(running.counts) == {*PASS_ENDINGS, *NOT_ENDINGS}
+                assert latest is not None
+                assert (latest.ending, latest.answer) == ("settled", {"n": 1})
+                assert set(ended) <= set(recorded)
+                p.stdin.write("\n")
+                p.stdin.flush()
+            assert p.stdout.readline() == "done 4 None\n"
+            assert p.wait() == 0
+        finally:
+            p.kill()
+    assert sorted(ended) == ["a", "b", "c", "d"]
+    with TaskReader(folder) as r:
+        (finished,) = r.passes("k")
+    assert (finished.ended, finished.stopped, finished.counts["settled"]) == (True, None, 4)

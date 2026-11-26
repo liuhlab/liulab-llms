@@ -7,6 +7,16 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `TaskReader` opens a task only to read it: where each pass stands, and what each unit
+  answered. It needs no gateway and no `UnitKind`, since every read takes the kind's name. It
+  writes nothing and takes no hold, so it reads while a pass in another process holds the
+  task. A folder with no task raises `NoTask`, a state file in an older layout raises
+  `UnknownLayout`, and a read kept waiting by a write raises `TaskBusy`. `Task`'s reads take
+  the kind's name too.
+- `PASS_ENDINGS`, `ENDINGS` and `NOT_ENDINGS` are exported from `labllm`.
+
 ## [2026.11.8] - 2026-11-24
 
 ### Changed
