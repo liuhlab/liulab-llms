@@ -7,6 +7,14 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `reply_json` reads the JSON value out of the text of a chat reply sent with no schema, as a
+  call to a DeepSeek model with thinking on must be. It reads the whole text as JSON, or else
+  the one fenced block in it, and ignores the prose around that block. Any other reply raises
+  `ReplyNotJson`, a `ValueError` whose message says why: no JSON, a block never closed, more
+  than one block, or a block that is not JSON. It never picks an object out of prose.
+
 ## [2026.11.8] - 2026-11-24
 
 ### Changed
