@@ -15,6 +15,7 @@ from labllm.errors import (
     UnknownTool,
 )
 from labllm.model import Model
+from labllm.replies import ReplyNotJson, reply_json
 from labllm.reviews import ChecksFailed, Review, Reviews
 from labllm.state import CheckResult, Outcome, Pass, Stamp, TaskInUse, UnitCost, UnknownLayout
 
@@ -42,6 +43,7 @@ __all__ = [
     "ProviderUnavailable",
     "QueueEntry",
     "Rejected",
+    "ReplyNotJson",
     "Review",
     "Reviews",
     "Role",
@@ -58,4 +60,5 @@ __all__ = [
     "UnknownLayout",
     "UnknownTool",
     "__version__",
+    "reply_json",
 ]

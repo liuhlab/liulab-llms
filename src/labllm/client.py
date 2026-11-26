@@ -33,6 +33,8 @@ log = logging.getLogger(__name__)
 class ChatReply:
     """A chat call's answer. `text` is unvalidated: the caller decides what it means.
 
+    For a call sent with no schema, `reply_json` reads the JSON value out of `text`.
+
     `cost_usd` is what this call paid, failed attempts included, zero on a cache hit;
     `first_cost_usd` is what the answer cost when it was first paid. `attempts` counts the
     requests the gateway sent the provider for this call, retries included: zero on a cache
