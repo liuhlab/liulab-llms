@@ -7,6 +7,15 @@ sets one.
 
 ## [Unreleased]
 
+### Added
+
+- `TaskReader.holder` says whether another process holds the task. It returns a
+  `TaskHolder` with that process's user, process ID, host and start time, or None when no
+  process holds it. It judges a holder gone by the rule a writing open uses: its process has
+  ended on this host, or its holder file has gone two minutes untouched. Each read looks
+  again and writes nothing, so a gone holder's file stays until a writing open deletes it.
+  `TaskHolder` is exported from `labllm`.
+
 ## [2026.11.9] - 2026-11-26
 
 ### Added

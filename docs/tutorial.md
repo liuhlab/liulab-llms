@@ -164,6 +164,14 @@ which brings it up to date. A read that waits too long for a write raises `TaskB
 again. A pass that stopped in the middle of a write raises `TaskNeedsRepair`: open the task
 once with `Task`, which repairs it. It cannot run a pass or save a review.
 
+To check whether a pass is running, read `reader.holder`. It returns a `TaskHolder` that
+names the process holding the task: its `user`, its process ID `pid`, its `host` and its start
+time `since`. It returns None when no process holds the task. A holder counts as gone once
+its process has ended on this computer, or once its file, `state.holder`, has gone two
+minutes without an update. `Task` judges it the same way when it opens. Each read looks
+again and writes nothing. The answer is true only when you read it, since a pass can start
+right after.
+
 ## 6. Run it on the lab's models
 
 Open your tunnel to the gateway and set `LABLLM_GATEWAY`, as

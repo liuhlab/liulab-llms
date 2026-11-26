@@ -31,7 +31,9 @@ from labllm.state import (
     Pass,
     PassStart,
     StateFile,
+    TaskHolder,
     UnitCost,
+    holder_of,
 )
 
 
@@ -778,6 +780,17 @@ class TaskReader(_Reads):
         self.path = self.folder / "state.sqlite"
         self._read_reviews = None if self.reviews is None else Reviews(self.reviews)
         self._state = StateFile(self.path, read_only=True)
+
+    @property
+    def holder(self) -> TaskHolder | None:
+        """The process holding the task now, or None if none does.
+
+        A holder counts as gone, and this is None, once its process has ended on this host or
+        its holder file has gone `labllm.state.STALE_S` seconds untouched: the rule a writing
+        open applies. Each read looks afresh and writes nothing. The answer holds only for the
+        moment of the read: a pass can start right after it.
+        """
+        return holder_of(self.path)
 
 
 def _add_usage(total: dict[str, Any], usage: Mapping[str, Any]) -> None:

@@ -193,6 +193,42 @@ class Holder:
         atexit.unregister(self.release)
 
 
+@dataclass(frozen=True)
+class TaskHolder:
+    """The process holding a task, as its holder file records it.
+
+    Each field is None when the file does not give it, as while its maker is still writing it.
+    """
+
+    user: str | None
+    pid: int | None
+    host: str | None
+    since: datetime | None
+
+
+def holder_of(state: Path) -> TaskHolder | None:
+    """Return who holds the task whose state file is `state`, or None if no process does.
+
+    A holder counts as gone by the same rule a writing open applies. Nothing is written: a gone
+    holder's file stays until a writing open deletes it.
+    """
+    found = _read_holder(_holder_path(state))
+    if found is None or _gone(*found):
+        return None
+    info = found[0]
+    since = None
+    if isinstance(text := info.get("since"), str):
+        with contextlib.suppress(ValueError):
+            since = datetime.fromisoformat(text)
+    return TaskHolder(
+        user=info.get("user"), pid=info.get("pid"), host=info.get("host"), since=since
+    )
+
+
+def _holder_path(state: Path) -> Path:
+    return state.with_suffix(".holder")
+
+
 def _read_holder(path: Path) -> tuple[dict[str, Any], float] | None:
     """Return the holder file's contents and seconds since it was touched, or None if gone."""
     try:
@@ -400,7 +436,7 @@ class StateFile:
                 self._conn.close()
                 raise
             return
-        self._holder = Holder(path.with_suffix(".holder"), path.parent)
+        self._holder = Holder(_holder_path(path), path.parent)
         try:
             self._conn = sqlite3.connect(path, check_same_thread=False, timeout=WRITE_WAIT_S)
         except BaseException:
