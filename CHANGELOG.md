@@ -7,6 +7,8 @@ sets one.
 
 ## [Unreleased]
 
+## [2026.11.10] - 2026-11-26
+
 ### Added
 
 - `TaskReader.holder` says whether another process holds the task. It returns a
