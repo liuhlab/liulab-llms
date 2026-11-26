@@ -31,5 +31,6 @@ version and covered by the provider-mapping test.
 - The reservation counts the original form: the mapping adds no prompt text.
 - A call without a schema keeps its messages and has no response format or tools.
 - The fake gateway does not imitate a provider's mapping; server tests cover the real request
-  and function-argument response.
+  and function-argument response. It refuses the forms the mapping refuses, through the one
+  check both call, `labllm.wire.check_chat`.
 - Existing cache keys do not change when the provider mapping changes.

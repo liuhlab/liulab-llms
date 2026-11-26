@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -49,7 +49,7 @@ from labllm.server.jev import TypeSafeJev
 from labllm.server.limits import RateLimit
 from labllm.server.prices import litellm
 from labllm.server.settings import load
-from labllm.testing import FakeClock, Price
+from labllm.testing import FakeClock, FakeGateway, Price
 
 DEEPSEEK = "deepseek-v4-flash"
 SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
@@ -324,20 +324,45 @@ def test_deepseek_gets_thinking_off_its_effort_and_a_strict_function_call() -> N
 
 
 @pytest.mark.parametrize(
-    ("model", "tool", "refusal"),
+    ("model", "schema", "tool", "refusal"),
     [
-        (Model("deepseek", "a-model", thinking=True), None, "thinking off"),
-        (Model("deepseek", "a-model"), "answer", "named answer"),
-        (Model("openai", "a-model"), "lookup", "DeepSeek only"),
+        (Model("typesafe", "a-model"), None, None, "Jev calls take the jev route"),
+        (Model("openai", "a-model"), None, "lookup", "to DeepSeek only, not openai"),
+        (Model("deepseek", "a-model"), SCHEMA, "answer", "may not be named answer"),
+        (Model("deepseek", "a-model", thinking=True), SCHEMA, None, "need thinking off"),
+        (Model("deepseek", "a-model", thinking=True), None, "lookup", "need thinking off"),
+        (Model("openai", "a-model", thinking=False), None, None, "thinking is a DeepSeek"),
+        (Model("deepseek", "a-model", thinking=False), SCHEMA, None, None),
+        (Model("deepseek", "a-model", thinking=True), None, None, None),
     ],
 )
-def test_a_chat_the_gateway_cannot_map_is_refused_before_a_provider_call(
-    model: Model, tool: str | None, refusal: str
+def test_the_fake_refuses_each_chat_the_gateway_cannot_map_as_the_gateway_does(
+    model: Model, schema: dict[str, Any] | None, tool: str | None, refusal: str | None
 ) -> None:
     tools = [{"name": tool, "description": "", "parameters": SCHEMA}] if tool else None
-    form = wire.chat_form(model, user="hello", system=None, schema=SCHEMA, tools=tools)
-    with pytest.raises(Rejected, match=refusal):
-        request(form)
+    form = wire.chat_form(model, user="hello", system=None, schema=schema, tools=tools)
+    real = _refusal(lambda: request(form))
+    played: list[dict[str, Any]] = []
+    fake = FakeGateway(lambda f: played.append(f) or '{"n": 1}', prices={"a-model": Price(0, 1e-4)})
+    call = wire.Call(form, "m", "m", 1.0, False, "ann", "tests", None).encode()
+    # Twice, so a refusal the fake had cached would show as an answer.
+    faked = [_refusal(lambda: wire.decode_response(*fake.send("/chat", call))) for _ in range(2)]
+    assert [str(e) if e else None for e in faked] == [str(real) if real else None] * 2
+    if refusal is None:
+        assert real is None
+    else:
+        assert refusal in str(real)
+        assert (played, [e.cost_usd for e in faked if e]) == ([], [0.0, 0.0])
+        assert sum(x.cost_usd for x in fake.record) == 0.0
+
+
+def _refusal(send: Callable[[], Any]) -> Rejected | None:
+    """Return the `Rejected` that `send` raises, or None if it returns."""
+    try:
+        send()
+    except Rejected as e:
+        return e
+    return None
 
 
 def test_deepseek_gets_a_strict_function_call_and_image_input() -> None:

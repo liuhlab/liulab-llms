@@ -249,10 +249,10 @@ def test_labels_tags_ceilings_and_callers_do_not_change_the_cache_key(harness: H
 @pytest.mark.parametrize(
     "change",
     [
-        {"model": dataclasses.replace(CHAT, temperature=0.5)},
-        {"model": dataclasses.replace(CHAT, thinking=True)},
-        {"model": dataclasses.replace(CHAT, effort="low")},
-        {"model": dataclasses.replace(CHAT, max_output_tokens=9)},
+        {"model": dataclasses.replace(AGENT, temperature=0.5)},
+        {"model": dataclasses.replace(AGENT, thinking=True)},
+        {"model": dataclasses.replace(AGENT, effort="low")},
+        {"model": dataclasses.replace(AGENT, max_output_tokens=9)},
         {"system": "be brief"},
         {"user": "hello!"},
         {"schema": SCHEMA},
@@ -264,7 +264,8 @@ def test_any_change_to_the_request_form_misses_the_cache(
 ) -> None:
     provider = Counting()
     harness.provider(provider)
-    base: dict[str, Any] = {"model": CHAT, "user": "hello"}
+    # DeepSeek, the one provider that takes `thinking`.
+    base: dict[str, Any] = {"model": AGENT, "user": "hello"}
     with harness.client().meter("miss", ceiling_usd=1.0) as m:
         m.chat(**base)
         r = m.chat(**(base | change))

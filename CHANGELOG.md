@@ -15,6 +15,14 @@ sets one.
   `ReplyNotJson`, a `ValueError` whose message says why: no JSON, a block never closed, more
   than one block, or a block that is not JSON. It never picks an object out of prose.
 
+### Changed
+
+- The fake gateway in `labllm.testing` now refuses every chat call the lab gateway refuses
+  from the call alone, with the same message, before the provider function runs. The one
+  that matters most: a DeepSeek call with thinking on and a schema or tools. A test of such a
+  call now fails as the live call does, instead of passing. Both gateways share the check,
+  `labllm.wire.check_chat`.
+
 ## [2026.11.8] - 2026-11-24
 
 ### Changed

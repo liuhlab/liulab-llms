@@ -69,6 +69,32 @@ def chat_form(
     return form
 
 
+def check_chat(form: dict[str, Any]) -> None:
+    """Refuse a chat form the gateway cannot send to its provider, from the form alone.
+
+    The gateway and the fake gateway both call it before a provider sees the form.
+
+    Raises
+    ------
+    Rejected
+        The form names the Jev provider, `thinking` for a provider other than DeepSeek, tools
+        for one, a tool named `answer` beside a schema, or thinking on for DeepSeek beside a
+        schema or tools, which become strict function calls.
+    """
+    provider, settings, schema = form["provider"], form["settings"], form.get("schema")
+    tools = form.get("tools") or []
+    if provider == "typesafe":
+        raise Rejected("Jev calls take the jev route")
+    if tools and provider != "deepseek":
+        raise Rejected(f"the gateway sends an agent's tools to DeepSeek only, not {provider}")
+    if schema is not None and any(tool["name"] == "answer" for tool in tools):
+        raise Rejected("an agent's tool may not be named answer: the schema's function is")
+    if provider == "deepseek" and (tools or schema is not None) and settings["thinking"] is True:
+        raise Rejected("DeepSeek strict function calls need thinking off")
+    if provider != "deepseek" and settings["thinking"] is not None:
+        raise Rejected(f"thinking is a DeepSeek setting; for {provider}, set effort instead")
+
+
 def jev_form(model: Model, *, description: str, questions: Mapping[str, Any]) -> dict[str, Any]:
     """Build the request form of a Jev call: its questions keep their names and order."""
     return {
