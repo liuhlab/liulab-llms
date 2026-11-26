@@ -43,8 +43,8 @@ def _uses_database(item: pytest.Item) -> bool:
 
 def _load_openai_client() -> None:
     """Load what the first OpenAI-shaped call imports lazily. Makes no network call."""
-    import openai
     import litellm.llms.openai.openai  # noqa: F401
+    import openai
 
     client = openai.OpenAI(api_key="warm-up")
     for resource in (client.chat.completions, client.responses, client.embeddings):
