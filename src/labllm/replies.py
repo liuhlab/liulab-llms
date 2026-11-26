@@ -11,7 +11,7 @@ class ReplyNotJson(ValueError):  # noqa: N818 - the name callers catch
 
 
 def reply_json(text: str) -> Any:
-    """Return the JSON value a reply holds, by one strict rule, or raise `ReplyNotJson`.
+    r"""Return the JSON value a reply holds, by one strict rule, or raise `ReplyNotJson`.
 
     The whole text, surrounding whitespace ignored, is read as JSON first. Failing that, a
     text with exactly two fence markers is read as the JSON between them, less the rest of the
@@ -19,9 +19,10 @@ def reply_json(text: str) -> Any:
     Nothing else is read: no object is picked out of prose, and no first of several blocks is
     taken. The value is not checked against any schema.
 
-    Examples:
-        >>> reply_json('Here:\\n```json\\n{"a": 1}\\n```')
-        {'a': 1}
+    Examples
+    --------
+    >>> reply_json('Here:\n```json\n{"a": 1}\n```')
+    {'a': 1}
     """
     try:
         return json.loads(text.strip())
