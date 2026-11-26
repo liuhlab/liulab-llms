@@ -16,6 +16,19 @@ sets one.
   `UnknownLayout`, and a read kept waiting by a write raises `TaskBusy`. `Task`'s reads take
   the kind's name too.
 - `PASS_ENDINGS`, `ENDINGS` and `NOT_ENDINGS` are exported from `labllm`.
+- `reply_json` reads the JSON value out of the text of a chat reply sent with no schema, as a
+  call to a DeepSeek model with thinking on must be. It reads the whole text as JSON, or else
+  the one fenced block in it, and ignores the prose around that block. Any other reply raises
+  `ReplyNotJson`, a `ValueError` whose message says why: no JSON, a block never closed, more
+  than one block, or a block that is not JSON. It never picks an object out of prose.
+
+### Changed
+
+- The fake gateway in `labllm.testing` now refuses every chat call the lab gateway refuses
+  from the call alone, with the same message, before the provider function runs. The one
+  that matters most: a DeepSeek call with thinking on and a schema or tools. A test of such a
+  call now fails as the live call does, instead of passing. Both gateways share the check,
+  `labllm.wire.check_chat`.
 
 ## [2026.11.8] - 2026-11-24
 

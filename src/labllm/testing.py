@@ -141,8 +141,9 @@ class FakeGateway:
     One cache by request form; a hit costs nothing and never counts against a ceiling, and a
     call identical to one in flight waits for it. Each meter's ceiling, with every call in
     flight holding back its largest possible cost, by the real gateway's rule in
-    `labllm.ceiling`. A model missing from `prices` is `Rejected`. Every attempt and hit goes
-    in `record`. An off-peak-only call that is not a hit gets the peak reply in its price's
+    `labllm.ceiling`. A model missing from `prices` is `Rejected`, and so is a chat form
+    `labllm.wire.check_chat` refuses, at no charge and before `provider`. Every attempt and
+    hit goes in `record`. An off-peak-only call that is not a hit gets the peak reply in its price's
     peak hours, and from `peak_margin_s` before they start.
 
     The provider's tokens are counted as characters: input is the messages' text, or Jev's
@@ -255,6 +256,8 @@ class FakeGateway:
                 self._ceilings.hold(call, reserve)
                 retries.attempts += 1
                 try:
+                    if form["route"] == "chat":
+                        wire.check_chat(form)
                     out = self._provider(form)
                 except Exception as e:
                     failure = unreadable(e, form["provider"])
