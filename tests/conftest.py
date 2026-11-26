@@ -31,6 +31,7 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     if not session.config.option.collectonly and any(map(_uses_database, session.items)):
         database()
         litellm()
+        _load_openai_client()
 
 
 def _uses_database(item: pytest.Item) -> bool:
@@ -38,3 +39,13 @@ def _uses_database(item: pytest.Item) -> bool:
     callspec = getattr(item, "callspec", None)
     on_gateway = callspec is not None and callspec.params.get("harness") == "gateway"
     return on_gateway or "conninfo" in getattr(item, "fixturenames", ())
+
+
+def _load_openai_client() -> None:
+    """Load what the first OpenAI-shaped call imports lazily. Makes no network call."""
+    import openai
+    import litellm.llms.openai.openai  # noqa: F401
+
+    client = openai.OpenAI(api_key="warm-up")
+    for resource in (client.chat.completions, client.responses, client.embeddings):
+        assert resource is not None
