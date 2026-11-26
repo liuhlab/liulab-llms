@@ -19,7 +19,7 @@ resources:
 
 envs:
   # Moving this tag, then rerunning `sky launch`, is the upgrade.
-  GATEWAY_TAG: v2026.11.8
+  GATEWAY_TAG: v2026.11.9
   BACKUP_BUCKET: null
 
 # The cloud-neutral install, synced to the VM.
