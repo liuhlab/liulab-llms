@@ -9,6 +9,13 @@ sets one.
 
 ### Added
 
+- `TaskReader` opens a task only to read it: where each pass stands, and what each unit
+  answered. It needs no gateway and no `UnitKind`, since every read takes the kind's name. It
+  writes nothing and takes no hold, so it reads while a pass in another process holds the
+  task. A folder with no task raises `NoTask`, a state file in an older layout raises
+  `UnknownLayout`, and a read kept waiting by a write raises `TaskBusy`. `Task`'s reads take
+  the kind's name too.
+- `PASS_ENDINGS`, `ENDINGS` and `NOT_ENDINGS` are exported from `labllm`.
 - `reply_json` reads the JSON value out of the text of a chat reply sent with no schema, as a
   call to a DeepSeek model with thinking on must be. It reads the whole text as JSON, or else
   the one fenced block in it, and ignores the prose around that block. Any other reply raises

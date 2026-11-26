@@ -3,7 +3,18 @@
 from importlib.metadata import version
 
 from labllm.client import AgentReply, ChatReply, Gateway, JevReply, Meter, Tool
-from labllm.engine import Held, Inputs, PassResult, QueueEntry, Role, Task, Unit, UnitEnd, UnitKind
+from labllm.engine import (
+    Held,
+    Inputs,
+    PassResult,
+    QueueEntry,
+    Role,
+    Task,
+    TaskReader,
+    Unit,
+    UnitEnd,
+    UnitKind,
+)
 from labllm.errors import (
     CeilingReached,
     GatewayUnreachable,
@@ -17,13 +28,29 @@ from labllm.errors import (
 from labllm.model import Model
 from labllm.replies import ReplyNotJson, reply_json
 from labllm.reviews import ChecksFailed, Review, Reviews
-from labllm.state import CheckResult, Outcome, Pass, Stamp, TaskInUse, UnitCost, UnknownLayout
+from labllm.state import (
+    ENDINGS,
+    NOT_ENDINGS,
+    PASS_ENDINGS,
+    CheckResult,
+    NoTask,
+    Outcome,
+    Pass,
+    Stamp,
+    TaskBusy,
+    TaskInUse,
+    UnitCost,
+    UnknownLayout,
+)
 
 #: Read from the installed distribution's metadata, which hatch-vcs fills from the newest
 #: git tag. No version string is written by hand anywhere in this repo.
 __version__ = version("liulab-llms")
 
 __all__ = [
+    "ENDINGS",
+    "NOT_ENDINGS",
+    "PASS_ENDINGS",
     "AgentReply",
     "CeilingReached",
     "ChatReply",
@@ -36,6 +63,7 @@ __all__ = [
     "JevReply",
     "Meter",
     "Model",
+    "NoTask",
     "Outcome",
     "Pass",
     "PassResult",
@@ -51,7 +79,9 @@ __all__ = [
     "StepLimitReached",
     "Stopped",
     "Task",
+    "TaskBusy",
     "TaskInUse",
+    "TaskReader",
     "Tool",
     "Unit",
     "UnitCost",

@@ -48,6 +48,12 @@ apart. Write the docstring; this page follows.
 ::: labllm.engine.Unit
 
 ::: labllm.engine.Task
+    options:
+      inherited_members: true
+
+::: labllm.engine.TaskReader
+    options:
+      inherited_members: true
 
 ::: labllm.engine.PassResult
 
@@ -65,7 +71,17 @@ apart. Write the docstring; this page follows.
 
 ::: labllm.state.TaskInUse
 
+::: labllm.state.NoTask
+
+::: labllm.state.TaskBusy
+
 ::: labllm.state.UnknownLayout
+
+::: labllm.state.PASS_ENDINGS
+
+::: labllm.state.ENDINGS
+
+::: labllm.state.NOT_ENDINGS
 
 ## Reviews
 

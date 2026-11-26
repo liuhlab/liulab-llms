@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, packages_distributions, version
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, NoReturn
+from typing import Any, Literal, NoReturn, Self
 
 import fastjsonschema
 
@@ -21,7 +21,7 @@ from labllm.client import ChatReply, Gateway, JevReply, Meter
 from labllm.clock import Clock
 from labllm.errors import Rejected, Stopped
 from labllm.model import Model
-from labllm.reviews import NO_ANSWER, Review, Reviews, holding
+from labllm.reviews import NO_ANSWER, Review, Reviews, holding, kind_name
 from labllm.state import (
     ENDINGS,
     NOT_ENDINGS,
@@ -376,7 +376,115 @@ class QueueEntry:
     reviews: tuple[Review, ...]
 
 
-class Task:
+class _Reads:
+    """The reads `Task` and `TaskReader` share. Each takes a kind or its name."""
+
+    _state: StateFile
+    _read_reviews: Reviews | None
+
+    def close(self) -> None:
+        """Close the state file."""
+        self._state.close()
+
+    def __enter__(self) -> Self:
+        """Return the task."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Close the task."""
+        self.close()
+
+    def _by_unit(self, kind: UnitKind | str) -> dict[str, tuple[Review, ...]]:
+        return {} if self._read_reviews is None else self._read_reviews.by_unit(kind)
+
+    def current(self, kind: UnitKind | str, key: str) -> Outcome | None:
+        """Return the unit's current answer: its outcome in the latest pass that reached an ending.
+
+        A person's review outranks it while that outcome's inputs tag is the one the review
+        was made for; of such reviews, the newest wins. None if no pass has reached an ending
+        for the unit. Unfinished and held change nothing.
+        """
+        outcome = self._state.current(kind_name(kind), key)
+        if outcome is None:
+            return None
+        review = holding(self._by_unit(kind).get(key, ()), outcome.stamp.inputs_tag)
+        if review is None:
+            return outcome
+        return dataclasses.replace(
+            outcome,
+            ending=review.ending,
+            answer=review.answer,
+            checks=review.checks,
+            reason=review.note if review.drop else None,
+            review=review,
+        )
+
+    def outcomes(self, kind: UnitKind | str, key: str) -> list[Outcome]:
+        """Return the unit's outcome in every pass that ran it, oldest first."""
+        return self._state.outcomes(kind_name(kind), key)
+
+    def passes(self, kind: UnitKind | str) -> list[Pass]:
+        """Return every pass of the kind, whatever its version, oldest first.
+
+        A pass whose process was killed before it ended is listed too, with what its units
+        recorded.
+        """
+        return self._state.passes(kind_name(kind))
+
+    def keys(self, kind: UnitKind | str, *, endings: Iterable[str] | None = None) -> list[str]:
+        """Return the keys whose current ending is one of `endings`, in key order.
+
+        With no `endings`, return every key any pass of the kind has recorded, whatever its
+        outcomes, so a unit that has only ever been unfinished or held is listed too.
+
+        Raises
+        ------
+        ValueError
+            One of `endings` is not an ending.
+        """
+        if endings is None:
+            return self._state.keys(kind_name(kind))
+        wanted = set(endings)
+        if unknown := wanted - set(ENDINGS):
+            raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
+        reviews = self._by_unit(kind)
+        keys = []
+        for key, ending, tag in self._state.latest(kind_name(kind)):
+            review = holding(reviews.get(key, ()), tag)
+            if (ending if review is None else review.ending) in wanted:
+                keys.append(key)
+        return keys
+
+    def review_queue(self, kind: UnitKind | str) -> list[QueueEntry]:
+        """Return every unit whose current answer is unsettled or refused, in key order."""
+        reviews = self._by_unit(kind)
+        queue = []
+        with self._state.snapshot():
+            keys = self.keys(kind, endings=("unsettled", "refused"))
+            outcomes_by_key = {key: self._state.outcomes(kind_name(kind), key) for key in keys}
+        for key, outcomes in outcomes_by_key.items():
+            current = next(o for o in reversed(outcomes) if o.ending in ENDINGS)
+            queue.append(
+                QueueEntry(
+                    kind=kind_name(kind),
+                    key=key,
+                    ending=current.ending,
+                    inputs_tag=current.stamp.inputs_tag or "",
+                    outcomes=tuple(outcomes),
+                    failed=tuple(c for c in current.checks if not c.passed),
+                    spent_usd=sum(o.cost.spent_usd for o in outcomes if o.cost is not None),
+                    reviews=reviews.get(key, ()),
+                )
+            )
+        return queue
+
+
+class Task(_Reads):
     """One task's state, kept in one SQLite file in `folder`, and the passes run on it.
 
     One process holds a task at a time. `state.holder`, beside the state file, names it while
@@ -409,24 +517,8 @@ class Task:
         self.path = self.folder / "state.sqlite"
         self._gateway = gateway
         self._reviews = Reviews(self.reviews, clock=gateway.clock)
+        self._read_reviews = self._reviews
         self._state = StateFile(self.path)
-
-    def close(self) -> None:
-        """Close the state file."""
-        self._state.close()
-
-    def __enter__(self) -> "Task":
-        """Return the task."""
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        """Close the task."""
-        self.close()
 
     def run_pass(
         self,
@@ -611,28 +703,6 @@ class Task:
             ended.cost = unit._cost()
         return ended
 
-    def current(self, kind: UnitKind, key: str) -> Outcome | None:
-        """Return the unit's current answer: its outcome in the latest pass that reached an ending.
-
-        A person's review outranks it while that outcome's inputs tag is the one the review
-        was made for; of such reviews, the newest wins. None if no pass has reached an ending
-        for the unit. Unfinished and held change nothing.
-        """
-        outcome = self._state.current(kind.name, key)
-        if outcome is None:
-            return None
-        review = holding(self._reviews.by_unit(kind).get(key, ()), outcome.stamp.inputs_tag)
-        if review is None:
-            return outcome
-        return dataclasses.replace(
-            outcome,
-            ending=review.ending,
-            answer=review.answer,
-            checks=review.checks,
-            reason=review.note if review.drop else None,
-            review=review,
-        )
-
     def save_review(
         self,
         kind: UnitKind,
@@ -670,62 +740,41 @@ class Task:
             accepted_pass=accepted_pass,
         )
 
-    def outcomes(self, kind: UnitKind, key: str) -> list[Outcome]:
-        """Return the unit's outcome in every pass that ran it, oldest first."""
-        return self._state.outcomes(kind.name, key)
 
-    def passes(self, kind: UnitKind) -> list[Pass]:
-        """Return every pass of the kind, whatever its version, oldest first.
+class TaskReader(_Reads):
+    """A task opened only to read it: no gateway, no hold, and nothing written.
 
-        A pass whose process was killed before it ended is listed too, with what its units
-        recorded.
-        """
-        return self._state.passes(kind.name)
+    It reads while a pass in another process holds the task, and never makes that pass fail.
+    Each read sees what one committed write left; a read that meets a write in progress
+    waits for it. It cannot run a pass or save a review, and it refuses a state file that a
+    writing open would upgrade.
 
-    def keys(self, kind: UnitKind, *, endings: Iterable[str] | None = None) -> list[str]:
-        """Return the keys whose current ending is one of `endings`, in key order.
+    Parameters
+    ----------
+    folder
+        The task's folder, as `Task` was given it.
+    reviews
+        The folder of the kinds' review files, so that reviews count. None counts none.
 
-        With no `endings`, return every key any pass of the kind has recorded, whatever its
-        outcomes, so a unit that has only ever been unfinished or held is listed too.
+    Raises
+    ------
+    NoTask
+        The folder is missing, or holds no task. Nothing is made.
+    UnknownLayout
+        The state file is not one this version of liulab-llms can read, or has an older
+        layout: open the task once with `Task` to upgrade it.
+    TaskBusy
+        From the open or any read: a write kept it waiting too long. Try again.
+    """
 
-        Raises
-        ------
-        ValueError
-            One of `endings` is not an ending.
-        """
-        if endings is None:
-            return self._state.keys(kind.name)
-        wanted = set(endings)
-        if unknown := wanted - set(ENDINGS):
-            raise ValueError(f"not endings: {sorted(unknown)}; endings are {list(ENDINGS)}")
-        reviews = self._reviews.by_unit(kind)
-        keys = []
-        for key, ending, tag in self._state.latest(kind.name):
-            review = holding(reviews.get(key, ()), tag)
-            if (ending if review is None else review.ending) in wanted:
-                keys.append(key)
-        return keys
-
-    def review_queue(self, kind: UnitKind) -> list[QueueEntry]:
-        """Return every unit whose current answer is unsettled or refused, in key order."""
-        reviews = self._reviews.by_unit(kind)
-        queue = []
-        for key in self.keys(kind, endings=("unsettled", "refused")):
-            outcomes = self._state.outcomes(kind.name, key)
-            current = next(o for o in reversed(outcomes) if o.ending in ENDINGS)
-            queue.append(
-                QueueEntry(
-                    kind=kind.name,
-                    key=key,
-                    ending=current.ending,
-                    inputs_tag=current.stamp.inputs_tag or "",
-                    outcomes=tuple(outcomes),
-                    failed=tuple(c for c in current.checks if not c.passed),
-                    spent_usd=sum(o.cost.spent_usd for o in outcomes if o.cost is not None),
-                    reviews=reviews.get(key, ()),
-                )
-            )
-        return queue
+    def __init__(
+        self, folder: str | os.PathLike[str], *, reviews: str | os.PathLike[str] | None = None
+    ) -> None:
+        self.folder = Path(folder)
+        self.reviews = None if reviews is None else Path(reviews)
+        self.path = self.folder / "state.sqlite"
+        self._read_reviews = None if self.reviews is None else Reviews(self.reviews)
+        self._state = StateFile(self.path, read_only=True)
 
 
 def _add_usage(total: dict[str, Any], usage: Mapping[str, Any]) -> None:

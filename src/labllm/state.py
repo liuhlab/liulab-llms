@@ -94,6 +94,11 @@ LAYOUT = len(_UPGRADES)
 HEARTBEAT_S = 20.0
 STALE_S = 120.0
 
+#: How long a read-only read waits for a write in progress, and how long a write waits for
+#: reads in progress. A write waits far longer, so no reader makes a pass fail.
+READ_WAIT_S = 5.0
+WRITE_WAIT_S = 120.0
+
 
 class UnknownLayout(Exception):  # noqa: N818 - the name callers catch
     """The state file is not one this version of liulab-llms can read."""
@@ -101,6 +106,14 @@ class UnknownLayout(Exception):  # noqa: N818 - the name callers catch
 
 class TaskInUse(Exception):  # noqa: N818 - the name callers catch
     """Another process holds the task, or has taken it over from this one."""
+
+
+class NoTask(Exception):  # noqa: N818 - the name callers catch
+    """A read-only open found no task: no folder, no state file, or one never written."""
+
+
+class TaskBusy(Exception):  # noqa: N818 - the name callers catch
+    """A write in progress kept a read waiting past `READ_WAIT_S`. Try the read again."""
 
 
 class Holder:
@@ -349,21 +362,41 @@ class Pass:
 
 
 class StateFile:
-    """One task's SQLite file, held by this process. Every method is safe from many threads.
+    """One task's SQLite file. Every method is safe from many threads.
+
+    Opened for writing, it holds the task and upgrades an older layout. Opened `read_only`, it
+    takes no hold, writes nothing and refuses an older layout; each read, and each
+    `snapshot`, sees what one committed transaction left.
 
     Raises
     ------
     TaskInUse
-        Another process holds the task.
+        Another process holds the task, on a writing open.
+    NoTask
+        On a read-only open, the file is missing or no task was ever written to it.
     UnknownLayout
-        The file is not one this version of liulab-llms can read.
+        The file is not one this version of liulab-llms can read, or, on a read-only open, it
+        has an older layout.
+    TaskBusy
+        On a read-only open, a write in progress kept the open waiting past `READ_WAIT_S`.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._lock = threading.Lock()
+    def __init__(self, path: Path, *, read_only: bool = False) -> None:
+        self.read_only = read_only
+        self._lock = threading.RLock()
+        self._depth = 0
+        if read_only:
+            self._holder: Holder | None = None
+            self._conn = _connect_read_only(path)
+            try:
+                self._check_layout(path)
+            except BaseException:
+                self._conn.close()
+                raise
+            return
         self._holder = Holder(path.with_suffix(".holder"), path.parent)
         try:
-            self._conn = sqlite3.connect(path, check_same_thread=False)
+            self._conn = sqlite3.connect(path, check_same_thread=False, timeout=WRITE_WAIT_S)
         except BaseException:
             self._holder.release()
             raise
@@ -379,18 +412,10 @@ class StateFile:
         try:
             # WAL needs shared memory, which a network file system does not give.
             conn.execute("PRAGMA journal_mode=DELETE")
-            app = conn.execute("PRAGMA application_id").fetchone()[0]
-            layout = conn.execute("PRAGMA user_version").fetchone()[0]
-            empty = conn.execute("SELECT count(*) FROM sqlite_schema").fetchone()[0] == 0
+            app, layout, empty = _layout(conn)
         except sqlite3.DatabaseError as e:
             raise UnknownLayout(f"{path} is not a task's state file: {e}") from e
-        if not (empty and app == 0) and app != _APPLICATION_ID:
-            raise UnknownLayout(f"{path} is not a task's state file")
-        if layout > LAYOUT:
-            raise UnknownLayout(
-                f"{path} has layout {layout}, newer than layout {LAYOUT} that this liulab-llms "
-                "reads; upgrade liulab-llms to open it"
-            )
+        _refuse_unknown(path, app, layout, empty)
         if layout < LAYOUT:
             steps = "".join(_UPGRADES[layout:])
             conn.executescript(
@@ -399,15 +424,68 @@ class StateFile:
             )
         conn.execute("PRAGMA foreign_keys=ON")
 
+    def _check_layout(self, path: Path) -> None:
+        try:
+            with self.snapshot() as conn:
+                app, layout, empty = _layout(conn)
+        except sqlite3.DatabaseError as e:
+            raise UnknownLayout(f"{path} is not a task's state file: {e}") from e
+        if empty and app == 0:
+            raise NoTask(f"{path} holds no task yet")
+        _refuse_unknown(path, app, layout, empty)
+        if layout < LAYOUT:
+            raise UnknownLayout(
+                f"{path} has layout {layout}, older than layout {LAYOUT} that this liulab-llms "
+                "reads; open the task once for writing, with Task, to upgrade it"
+            )
+
     def close(self) -> None:
-        """Close the file and give up the hold."""
+        """Close the file and give up the hold, if this process has it."""
         with self._lock:
             self._conn.close()
-            self._holder.release()
+            if self._holder is not None:
+                self._holder.release()
+
+    @contextlib.contextmanager
+    def snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Run the reads inside it against one committed state, under the lock.
+
+        A snapshot inside another joins it. On a read-only open the outermost one is a read
+        transaction, which a write in progress keeps waiting up to `READ_WAIT_S`.
+
+        Raises
+        ------
+        TaskBusy
+            On a read-only open, a write in progress kept the read waiting too long.
+        """
+        with self._lock:
+            if not self.read_only or self._depth:
+                self._depth += 1
+                try:
+                    yield self._conn
+                finally:
+                    self._depth -= 1
+                return
+            self._depth += 1
+            try:
+                try:
+                    self._conn.execute("BEGIN")
+                    yield self._conn
+                finally:
+                    with contextlib.suppress(sqlite3.Error):
+                        self._conn.execute("ROLLBACK")
+            except sqlite3.OperationalError as e:
+                if e.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY:
+                    raise TaskBusy(f"a write kept this read waiting {READ_WAIT_S:g} s") from e
+                raise
+            finally:
+                self._depth -= 1
 
     @contextlib.contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
         """One transaction, under the lock and only while this process holds the task."""
+        if self._holder is None:
+            raise TypeError("a task opened read-only cannot be written")
         with self._lock:
             self._holder.check()
             with self._conn:
@@ -505,8 +583,8 @@ class StateFile:
 
     def outcomes(self, kind: str, key: str) -> list[Outcome]:
         """Return every pass's outcome for one unit, oldest first."""
-        with self._lock:
-            rows = self._conn.execute(
+        with self.snapshot() as conn:
+            rows = conn.execute(
                 f"SELECT {_OUTCOME_COLUMNS} FROM outcomes o JOIN passes p USING (pass_id) "
                 "WHERE o.kind=? AND o.key=? ORDER BY o.pass_id",
                 (kind, key),
@@ -515,8 +593,8 @@ class StateFile:
 
     def current(self, kind: str, key: str) -> Outcome | None:
         """Return the outcome of the latest pass that reached an ending for one unit, if any."""
-        with self._lock:
-            row = self._conn.execute(
+        with self.snapshot() as conn:
+            row = conn.execute(
                 f"SELECT {_OUTCOME_COLUMNS} FROM outcomes o JOIN passes p USING (pass_id) "
                 f"WHERE o.kind=? AND o.key=? AND o.ending IN {_ENDED} "
                 "ORDER BY o.pass_id DESC LIMIT 1",
@@ -526,8 +604,8 @@ class StateFile:
 
     def latest(self, kind: str) -> list[tuple[str, str, str | None]]:
         """Return each unit's key, ending and inputs tag in its latest ended pass, by key."""
-        with self._lock:
-            return self._conn.execute(
+        with self.snapshot() as conn:
+            return conn.execute(
                 "SELECT key, ending, inputs_tag FROM outcomes o "
                 "WHERE kind=? AND pass_id = ("
                 "  SELECT max(pass_id) FROM outcomes"
@@ -538,16 +616,16 @@ class StateFile:
 
     def keys(self, kind: str) -> list[str]:
         """Return every key with an outcome of one kind, in key order."""
-        with self._lock:
-            rows = self._conn.execute(
+        with self.snapshot() as conn:
+            rows = conn.execute(
                 "SELECT DISTINCT key FROM outcomes WHERE kind=? ORDER BY key", (kind,)
             ).fetchall()
         return [key for (key,) in rows]
 
     def passes(self, kind: str) -> list[Pass]:
         """Return every pass of one kind, oldest first."""
-        with self._lock:
-            rows = self._conn.execute(
+        with self.snapshot() as conn:
+            rows = conn.execute(
                 "SELECT pass_id, meter, kind, kind_version, label, note, models, ceiling_usd, "
                 "off_peak_only, repo_version, labllm_version, spent_usd IS NOT NULL, stopped, "
                 "coalesce(spent_usd, (SELECT total(spent_usd) FROM outcomes o "
@@ -561,7 +639,7 @@ class StateFile:
                 "FROM passes p WHERE kind=? ORDER BY pass_id",
                 (kind,),
             ).fetchall()
-            counted = self._conn.execute(
+            counted = conn.execute(
                 "SELECT pass_id, ending, count(*) FROM outcomes WHERE kind=? "
                 "GROUP BY pass_id, ending",
                 (kind,),
@@ -628,6 +706,40 @@ class StateFile:
             cost=None
             if usage is None
             else UnitCost(spent, first, requests, cache_hits, json.loads(usage), seconds),
+        )
+
+
+def _connect_read_only(path: Path) -> sqlite3.Connection:
+    """Open the file read-only, so SQLite creates no journal and touches no lock file."""
+    if not path.is_file():
+        raise NoTask(f"{path.parent} holds no task: there is no {path.name}")
+    try:
+        return sqlite3.connect(
+            f"{path.absolute().as_uri()}?mode=ro",
+            uri=True,
+            check_same_thread=False,
+            timeout=READ_WAIT_S,
+            isolation_level=None,
+        )
+    except sqlite3.OperationalError as e:
+        raise NoTask(f"{path.parent} holds no task: {e}") from e
+
+
+def _layout(conn: sqlite3.Connection) -> tuple[int, int, bool]:
+    """Return the file's application id, its layout, and whether it has no tables."""
+    app = conn.execute("PRAGMA application_id").fetchone()[0]
+    layout = conn.execute("PRAGMA user_version").fetchone()[0]
+    empty = conn.execute("SELECT count(*) FROM sqlite_schema").fetchone()[0] == 0
+    return app, layout, empty
+
+
+def _refuse_unknown(path: Path, app: int, layout: int, empty: bool) -> None:
+    if not (empty and app == 0) and app != _APPLICATION_ID:
+        raise UnknownLayout(f"{path} is not a task's state file")
+    if layout > LAYOUT:
+        raise UnknownLayout(
+            f"{path} has layout {layout}, newer than layout {LAYOUT} that this liulab-llms "
+            "reads; upgrade liulab-llms to open it"
         )
 
 

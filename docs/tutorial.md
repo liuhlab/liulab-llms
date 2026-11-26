@@ -152,6 +152,17 @@ its new answer. `task.save_review` finds the tag itself.
 A review outranks the models' answer until the unit's inputs tag changes. Then the unit goes
 back through the models.
 
+To see where a long pass stands while it runs, open the task with `TaskReader`. It needs only
+the task's folder, and the reviews folder if reviews should count. It needs no gateway and
+no `UnitKind`: each read takes the kind's name, such as `reader.passes("species")`. It
+writes nothing and takes no hold, so it works while a pass in another process holds the task.
+Each read sees the state as one finished write left it.
+
+`TaskReader` refuses three things. A folder with no task raises `NoTask`, and nothing is
+made. A state file from an older liulab-llms raises `UnknownLayout`: open it once with `Task`,
+which brings it up to date. A read that waits too long for a write raises `TaskBusy`; try it
+again. It cannot run a pass or save a review.
+
 ## 6. Run it on the lab's models
 
 Open your tunnel to the gateway and set `LABLLM_GATEWAY`, as

@@ -141,7 +141,7 @@ _Avoid_: provenance, metadata
 ### Task
 
 One body of work's state: one SQLite file in a folder the calling command names, held by one
-process at a time. It keeps every pass and each unit's outcome, answer, stamp and check
+process at a time. A read-only open takes no hold, so it reads while a pass runs. It keeps every pass and each unit's outcome, answer, stamp and check
 results per pass. Deleting the file is safe: rerunning rebuilds the models' answers from the
 cache.
 _Avoid_: project, database
